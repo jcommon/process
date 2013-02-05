@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/process.iml" filepath="$PROJECT_DIR$/process.iml" />
+      <module fileurl="file://$PROJECT_DIR$/jcommon-process.iml" filepath="$PROJECT_DIR$/jcommon-process.iml" />
     </modules>
   </component>
 </project>
