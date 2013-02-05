@@ -1,0 +1,10 @@
+<head><title>Downloads</title></head>
+
+Downloads
+-------------
+
+The following artifacts are available for download:
+
+- [${vm_site_artifact_prefix}-${project.artifactId}-${project.version}.${project.packaging}](builds/v${project.version}/${vm_site_artifact_prefix}-${project.artifactId}-${project.version}.${project.packaging})
+- [${vm_site_artifact_prefix}-${project.artifactId}-${project.version}-sources.${project.packaging}](builds/v${project.version}/${vm_site_artifact_prefix}-${project.artifactId}-${project.version}-sources.${project.packaging})
+- [${vm_site_artifact_prefix}-${project.artifactId}-${project.version}-javadoc.${project.packaging}](builds/v${project.version}/${vm_site_artifact_prefix}-${project.artifactId}-${project.version}-javadoc.${project.packaging})

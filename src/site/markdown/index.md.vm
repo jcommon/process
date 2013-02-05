@@ -1,0 +1,19 @@
+<head><title>Welcome</title></head>
+
+JCommon Process
+-------------
+
+This library provides efficient, scalable process creation and asynchronous stdout/stdin processing beyond java.lang.Process.
+Please see the documentation for more information.
+
+To use this library, add the following snippet to your _pom_ file:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>${project.artifactId}</artifactId>
+        <version>${project.version}</version>
+    </dependency>
+</dependencies>
+```

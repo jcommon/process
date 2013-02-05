@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="JCommon Process" xmlns="http://maven.apache.org/DECORATION/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/DECORATION/1.0.0 http://maven.apache.org/xsd/decoration-1.0.0.xsd">
+
+  <bannerLeft>
+    <name>JCommon Process Home</name>
+    <alt>JCommon Process Home</alt>
+    <src>./img/banner.png</src>
+    <href>./index.html</href>
+  </bannerLeft>
+
+  <publishDate position="none" />
+
+  <skin>
+    <groupId>org.apache.maven.skins</groupId>
+    <artifactId>maven-fluido-skin</artifactId>
+    <version>1.3.0</version>
+  </skin>
+  <custom>
+    <fluidoSkin>
+      <!--
+      <googlePlusOne />
+      -->
+      <topBarEnabled>true</topBarEnabled>
+      <sideBarEnabled>true</sideBarEnabled>
+      <sourceLineNumbersEnabled>false</sourceLineNumbersEnabled>
+      <topBarIcon>
+        <name>JCommon GitHub Home</name>
+        <alt>JCommon GitHub Home</alt>
+        <src>./img/product-54x16.png</src>
+        <href>http://github.com/jcommon/</href> <!-- Deliberately omit https b/c maven site generator can't seem to handle it -->
+      </topBarIcon>
+      <gitHub>
+        <projectId>jcommon/process</projectId>
+        <ribbonOrientation>right</ribbonOrientation>
+        <ribbonColor>green</ribbonColor>
+      </gitHub>
+    </fluidoSkin>
+  </custom>
+
+  <body>
+    <head>
+      <link rel="shortcut icon" href="./favicon.ico" />
+    </head>
+
+    <menu name="Project">
+      <item name="Home" href="index.html" />
+      <item name="Downloads" href="downloads.html" />
+      <item name="Issue Report" href="github-report.html" />
+      <item name="GitHub Home" href="http://github.com/jcommon/process/" />
+    </menu>
+
+    <menu name="Documentation">
+      <item name="JavaDocs" href="docs.html" />
+      <item name="Source" href="source.html" />
+      <item name="Test Source" href="test-source.html" />
+      <item name="Checkstyle" href="checkstyle-aggregate.html" />
+      <item name="FindBugs Report" href="findbugs.html" />
+      <item name="Surefire Report" href="surefire.html" />
+
+      <item name="Dependencies" href="dependencies.html" />
+      <item name="Team" href="team-list.html" />
+      <item name="License" href="license.html" />
+    </menu>
+
+    <menu name="Authors/Contributors">
+      <item name="@benke" href="http://github.com/benke" />
+      <item name="@davidhoyt" href="http://github.com/davidhoyt" />
+    </menu>
+
+    <footer>Copyright &amp;copy; 2013. All rights reserved.</footer>
+  </body>
+
+</project>
