@@ -19,6 +19,8 @@
 
 package jcommon.process;
 
+import jcommon.process.platform.ILaunchProcess;
+import jcommon.process.platform.win32.Win32LaunchProcess;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
@@ -27,7 +29,14 @@ import static org.junit.Assert.assertTrue;
 @SuppressWarnings("unchecked")
 public class ProcessTest {
   @Test
-  public void testPID() {
-    assertTrue(jcommon.core.Process.queryPID() > 0);
+  public void testLaunchProcess() {
+    Extract.extractAllResources();
+
+    ILaunchProcess p = new Win32LaunchProcess();
+
+    //p.launch("cmd.exe", "/c", "echo", "%PATH%");
+    for(int i = 0; i < 100; ++i) {
+      p.launch("cmd.exe", "/c", "echo", "blah");
+    }
   }
 }
