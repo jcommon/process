@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-char* getline(void);
+char* read_single_line(void);
 
 int main(int argc, const char *argv[]) {
   //Echoes everything written via stdin to stdout.
@@ -12,7 +12,7 @@ int main(int argc, const char *argv[]) {
     char* line;
     bool done;
 
-    line =  getline();
+    line =  read_single_line();
     done = (strncmp(line, "\n") == 0);
 
     if (!done)
@@ -25,7 +25,7 @@ int main(int argc, const char *argv[]) {
   return 0;
 }
 
-char* getline(void) {
+char* read_single_line(void) {
   char * line = malloc(100), * linep = line;
   size_t lenmax = 100, len = lenmax;
   int c;
