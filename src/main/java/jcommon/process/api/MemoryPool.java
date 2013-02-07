@@ -21,72 +21,69 @@ package jcommon.process.api;
 
 import com.sun.jna.Pointer;
 
-import java.util.Stack;
-import java.util.concurrent.locks.ReentrantLock;
-
 /**
  * Allows reuse of memory buffers to prevent memory fragmentation over time.
  */
-public class MemoryBufferPool {
+@SuppressWarnings("unused")
+public class MemoryPool {
   public static final int
       DEFAULT_INITIAL_SLICE_COUNT = (int)(Runtime.getRuntime().availableProcessors() * 1.5)
-    , DEFAULT_SLICE_SIZE = 4096
-    , DEFAULT_MAX_SLICE_COUNT = 1000
+    , DEFAULT_SLICE_SIZE          = 4096
+    , DEFAULT_MAX_SLICE_COUNT     = 1000
   ;
 
   public static final int
       INFINITE_SLICE_COUNT = -1
   ;
 
-  private int slice_count;
   private final int slice_size;
-  private final int max_slice_count;
-  private final Object lock = new Object();
-  private final Stack<Pointer> used = new Stack<Pointer>();
-  private final Stack<Pointer> available = new Stack<Pointer>();
+  private final ObjectPool<Pointer> pool;
   private final PinnableMemory.IPinListener pin_listener;
 
-  public MemoryBufferPool() {
+  public MemoryPool() {
     this(DEFAULT_SLICE_SIZE, DEFAULT_INITIAL_SLICE_COUNT, DEFAULT_MAX_SLICE_COUNT);
   }
 
-  public MemoryBufferPool(int sliceSize) {
+  public MemoryPool(int sliceSize) {
     this(sliceSize, DEFAULT_INITIAL_SLICE_COUNT, DEFAULT_MAX_SLICE_COUNT);
   }
 
-  public MemoryBufferPool(int sliceSize, int initialSliceCount, int maxSliceCount) {
+  public MemoryPool(final int sliceSize, int initialSliceCount, int maxSliceCount) {
     this.slice_size = sliceSize;
-    this.max_slice_count = maxSliceCount;
+
     this.pin_listener = new PinnableMemory.IPinListener() {
       @Override
       public boolean unpinned(final PinnableMemory memory) {
         //Don't dispose of the memory. We want to manage it ourselves.
         //Just return it to the pool. Returning false instructs PinnableMemory
         //to not dispose of the memory.
-        returnToPool(memory);
+        pool.returnToPool(memory);
         return false;
       }
     };
 
-    for(int i = 0; i < initialSliceCount; ++i) {
-      available.push(allocateSlice());
-    }
+    this.pool = new ObjectPool<Pointer>(initialSliceCount, maxSliceCount, new ObjectPool.IAllocator<Pointer>() {
+      @Override
+      public Pointer allocateInstance() {
+        return PinnableMemory.pin(slice_size, pin_listener);
+      }
+
+      @Override
+      public void reclaimInstance(Pointer instance) {
+        //Do nothing b/c we've assigned a listener to the memory for when it's unpinned.
+        //The listener will automatically clean up for us.
+        //See the pin_listener#unpinned() method.
+      }
+
+      @Override
+      public void disposeInstance(Pointer p) {
+        PinnableMemory.dispose(p);
+      }
+    });
   }
 
   public void dispose() {
-    synchronized (lock) {
-      for(Pointer p : available) {
-        PinnableMemory.dispose(p);
-      }
-
-      for(Pointer p : used) {
-        PinnableMemory.dispose(p);
-      }
-
-      available.clear();
-      used.clear();
-      slice_count = 0;
-    }
+    pool.dispose();
   }
 
   public int getSliceSize() {
@@ -94,39 +91,18 @@ public class MemoryBufferPool {
   }
 
   public int getSliceCount() {
-    return slice_count;
+    return pool.getPoolSize();
   }
 
   public int getMaximumSliceCount() {
-    return max_slice_count;
+    return pool.getMaximumPoolSize();
   }
 
   public boolean isMaximumSliceCountInfinite() {
-    return max_slice_count == INFINITE_SLICE_COUNT;
-  }
-
-  private Pointer allocateSlice() {
-    if (!isMaximumSliceCountInfinite() && slice_count >= max_slice_count) {
-      throw new IllegalStateException("Maximum slice count has been reached. Please release some slices from the pool before requesting more.");
-    }
-
-    ++slice_count;
-    return PinnableMemory.pin(slice_size, pin_listener);
-  }
-
-  private void returnToPool(Pointer p) {
-    synchronized (lock) {
-      used.remove(p);
-      available.push(p);
-      --slice_count;
-    }
+    return pool.isMaximumPoolSizeInfinite();
   }
 
   public Pointer requestSlice() {
-    synchronized (lock) {
-      final Pointer p = !available.isEmpty() ? available.pop() : allocateSlice();
-      used.push(p);
-      return p;
-    }
+    return pool.requestInstance();
   }
 }

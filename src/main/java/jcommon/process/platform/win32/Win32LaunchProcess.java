@@ -22,7 +22,7 @@ package jcommon.process.platform.win32;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
-import jcommon.process.api.MemoryBufferPool;
+import jcommon.process.api.MemoryPool;
 import jcommon.process.api.PinnableMemory;
 import jcommon.process.platform.ILaunchProcess;
 
@@ -42,7 +42,7 @@ import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 public class Win32LaunchProcess implements ILaunchProcess {
   private static HANDLE io_completion_port = INVALID_HANDLE_VALUE;
   private static final Object io_port_lock = new Object();
-  private static final MemoryBufferPool memory_pool = new MemoryBufferPool(4096, 3, MemoryBufferPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
+  private static final MemoryPool memory_pool = new MemoryPool(4096, 3, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
   private static final AtomicInteger running_process_count = new AtomicInteger(0);
   private static final AtomicInteger running_thread_count = new AtomicInteger(0);
   private static final ThreadGroup thread_group = new ThreadGroup("external processes");
