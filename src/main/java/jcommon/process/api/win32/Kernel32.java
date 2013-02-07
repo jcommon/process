@@ -22,6 +22,7 @@ package jcommon.process.api.win32;
 import com.sun.jna.*;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
+import jcommon.process.api.PinnableStruct;
 
 import java.nio.Buffer;
 import java.util.List;
@@ -369,7 +370,7 @@ public class Kernel32 implements Win32Library {
     public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessW(lpApplicationName == null ? null : new WString(lpApplicationName), lpCommandLine != null ? new WString(lpCommandLine) : null, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
   }
 
-  public static class OVERLAPPED extends Structure {
+  public static class OVERLAPPED extends PinnableStruct<OVERLAPPED> {
     public ULONG_PTR Internal;
     public ULONG_PTR InternalHigh;
     public int Offset;

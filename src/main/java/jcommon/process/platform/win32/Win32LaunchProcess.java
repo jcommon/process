@@ -23,7 +23,9 @@ import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 import jcommon.process.api.MemoryPool;
+import jcommon.process.api.ObjectPool;
 import jcommon.process.api.PinnableMemory;
+import jcommon.process.api.PinnableStruct;
 import jcommon.process.platform.ILaunchProcess;
 
 import java.nio.ByteBuffer;
@@ -41,7 +43,10 @@ import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
 public class Win32LaunchProcess implements ILaunchProcess {
   private static MemoryPool memory_pool = null;
+  private static OverlappedPool overlapped_pool = null;
+
   private static HANDLE io_completion_port = INVALID_HANDLE_VALUE;
+
   private static final Object io_port_lock = new Object();
   private static final AtomicInteger running_process_count = new AtomicInteger(0);
   private static final AtomicInteger running_thread_count = new AtomicInteger(0);
@@ -89,7 +94,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
   private static IOCompletionPortInformation initSharedIOCompletionPort(HANDLE associate) {
     synchronized (io_port_lock) {
       if (running_process_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
-        memory_pool = new MemoryPool(4096, 3, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
+        memory_pool = new MemoryPool(4096, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
+        overlapped_pool = new OverlappedPool(number_of_processors);
         io_completion_port = CreateUnassociatedIoCompletionPort(Runtime.getRuntime().availableProcessors());
 
         //Create thread pool
@@ -151,6 +157,9 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
         memory_pool.dispose();
         memory_pool = null;
+
+        overlapped_pool.dispose();
+        overlapped_pool = null;
       }
     }
   }
@@ -217,6 +226,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //and check that our flag has been set. If so, then it's time to go!
       if (overlapped.op == OVERLAPPEDEX.OP_EXITTHREAD) {
         PinnableMemory.unpin(overlapped.buffer);
+        PinnableStruct.unpin(overlapped);
 
         //The completion key will be an integer id indicating the thread that this message is
         //intended for. If the ids match, then get out of here, otherwise relay the message.
@@ -239,6 +249,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //then go ahead and ignore it.
       if ((pi = completion_ports.get(port)) == null) {
         PinnableMemory.unpin(overlapped.buffer);
+        PinnableStruct.unpin(overlapped);
         continue;
       }
 
@@ -255,6 +266,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
             }
 
             PinnableMemory.unpin(overlapped.buffer);
+            PinnableStruct.unpin(overlapped);
             //read(pi);
 
             continue;
@@ -266,6 +278,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           }
 
           PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
 
           //Schedule our next read.
           read(pi);
@@ -273,6 +286,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           break;
         case OVERLAPPEDEX.OP_REQUEST_READ:
           PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
           read(pi);
           break;
       }
@@ -540,13 +554,12 @@ public class Win32LaunchProcess implements ILaunchProcess {
   }
 
   private static void read(IOCompletionPortInformation port_info) {
-    //IntByReference ref = new IntByReference();
-    final OVERLAPPEDEX o = new OVERLAPPEDEX();
-    o.op = OVERLAPPEDEX.OP_READ;
-    o.buffer = memory_pool.requestSlice();
-    o.bufferSize = memory_pool.getSliceSize();
+    final OVERLAPPEDEX o = overlapped_pool.requestInstance(
+      OVERLAPPEDEX.OP_READ,
+      memory_pool.requestSlice(),
+      memory_pool.getSliceSize()
+    );
 
-    //while (ReadFile(port_info.hPipeInst, port_info.oOverlap.buffer, port_info.oOverlap.bufferSize, null, port_info.oOverlap) /*|| lp_bytes_read.getValue() == 0*/) {
     if (ReadFile(port_info.hPipeInst, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
       //uh-oh! That means the data was processed synchronously.
       //Doing nothing seems to work.
@@ -794,5 +807,52 @@ public class Win32LaunchProcess implements ILaunchProcess {
       , OP_CLOSE                      = 5
       , OP_EXITTHREAD                 = 6
     ;
+  }
+
+  private static class OverlappedPool {
+    private final ObjectPool<OVERLAPPEDEX> pool;
+    private final PinnableStruct.IPinListener<OVERLAPPEDEX> pin_listener;
+
+    public OverlappedPool(int initialPoolSize) {
+      this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPEDEX>() {
+        @Override
+        public boolean unpinned(OVERLAPPEDEX instance) {
+          pool.returnToPool(instance);
+          return false;
+        }
+      };
+
+      this.pool = new ObjectPool<OVERLAPPEDEX>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPEDEX>() {
+        @Override
+        public OVERLAPPEDEX allocateInstance() {
+          return OVERLAPPEDEX.pin(new OVERLAPPEDEX(), pin_listener);
+        }
+
+        @Override
+        public void disposeInstance(OVERLAPPEDEX instance) {
+          OVERLAPPEDEX.dispose(instance);
+        }
+      });
+    }
+
+    public void dispose() {
+      pool.dispose();
+    }
+
+    public OVERLAPPEDEX requestInstance() {
+      return pool.requestInstance();
+    }
+
+    public OVERLAPPEDEX requestInstance(final int operation) {
+      return requestInstance(operation, null, 0);
+    }
+
+    public OVERLAPPEDEX requestInstance(final int operation, final Pointer buffer, final int buffer_size) {
+      final OVERLAPPEDEX instance = requestInstance();
+      instance.op = operation;
+      instance.buffer = buffer;
+      instance.bufferSize = buffer_size;
+      return instance;
+    }
   }
 }

@@ -62,7 +62,7 @@ public class MemoryPool {
       }
     };
 
-    this.pool = new ObjectPool<Pointer>(initialSliceCount, maxSliceCount, new ObjectPool.IAllocator<Pointer>() {
+    this.pool = new ObjectPool<Pointer>(initialSliceCount, maxSliceCount, new ObjectPool.Allocator<Pointer>() {
       @Override
       public Pointer allocateInstance() {
         return PinnableMemory.pin(slice_size, pin_listener);

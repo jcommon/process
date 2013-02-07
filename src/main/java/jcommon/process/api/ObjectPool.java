@@ -41,6 +41,16 @@ public class ObjectPool<T> {
     void disposeInstance(T instance);
   }
 
+  public static abstract class Allocator<T> implements IAllocator<T> {
+    @Override
+    public void reclaimInstance(T instance) {
+    }
+
+    @Override
+    public void disposeInstance(T instance) {
+    }
+  }
+
   private int pool_size;
   private final int max_pool_size;
   private final Object lock = new Object();
