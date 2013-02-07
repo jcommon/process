@@ -126,6 +126,10 @@ public class ObjectPool<T> {
 
   public final T requestInstance() {
     synchronized (lock) {
+      if (isDisposed()) {
+        throw new IllegalStateException("Pool has been disposed. Unable to allocate more instances.");
+      }
+
       final T t = !available.isEmpty() ? available.pop() : allocateInstance();
       used.push(t);
       return t;

@@ -33,36 +33,40 @@ public class ProcessTest {
   @Test
   public void testLaunchProcess() throws Throwable {
     final ILaunchProcess p = new Win32LaunchProcess();
-    final int concurrent_processes = 3;
-    final CyclicBarrier start_barrier = new CyclicBarrier(concurrent_processes + 1);
-    final CyclicBarrier stop_barrier = new CyclicBarrier(concurrent_processes + 1);
+    final int concurrent_processes = 8;
+    final int times = 3;
 
-    //p.launch("cmd.exe", "/c", "echo", "%PATH%");
-    //p.launch(Resources.STDOUT_1, "how", "are", "you");
+    for(int time = 0; time < times; ++time) {
+      final CyclicBarrier start_barrier = new CyclicBarrier(concurrent_processes + 1);
+      final CyclicBarrier stop_barrier = new CyclicBarrier(concurrent_processes + 1);
 
-    for(int i = 0; i < concurrent_processes; ++i) {
-      final int idx = i;
-      final Thread t = new Thread (new Runnable() {
-        @Override
-        public void run() {
-          try {
-            start_barrier.await();
-            p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (idx + 1), "4000");
-            stop_barrier.await();
-          } catch(Throwable t) {
-            t.printStackTrace();
-          }
-        }
-      });
-      t.setDaemon(false);
-      t.start();
-
-      //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
+      //p.launch("cmd.exe", "/c", "echo", "%PATH%");
       //p.launch(Resources.STDOUT_1, "how", "are", "you");
-    }
 
-    start_barrier.await();
-    stop_barrier.await();
+      for(int i = 0; i < concurrent_processes; ++i) {
+        final int idx = i;
+        final Thread t = new Thread (new Runnable() {
+          @Override
+          public void run() {
+            try {
+              start_barrier.await();
+              p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (idx + 1), "10");
+              stop_barrier.await();
+            } catch(Throwable t) {
+              t.printStackTrace();
+            }
+          }
+        });
+        t.setDaemon(false);
+        t.start();
+
+        //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
+        //p.launch(Resources.STDOUT_1, "how", "are", "you");
+      }
+
+      start_barrier.await();
+      stop_barrier.await();
+    }
 
     System.out.println(Resources.STDOUT_ECHO_REPEAT);
   }

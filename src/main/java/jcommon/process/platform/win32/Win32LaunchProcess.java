@@ -40,9 +40,9 @@ import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
 public class Win32LaunchProcess implements ILaunchProcess {
+  private static MemoryPool memory_pool = null;
   private static HANDLE io_completion_port = INVALID_HANDLE_VALUE;
   private static final Object io_port_lock = new Object();
-  private static final MemoryPool memory_pool = new MemoryPool(4096, 3, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
   private static final AtomicInteger running_process_count = new AtomicInteger(0);
   private static final AtomicInteger running_thread_count = new AtomicInteger(0);
   private static final ThreadGroup thread_group = new ThreadGroup("external processes");
@@ -89,6 +89,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
   private static IOCompletionPortInformation initSharedIOCompletionPort(HANDLE associate) {
     synchronized (io_port_lock) {
       if (running_process_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
+        memory_pool = new MemoryPool(4096, 3, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
         io_completion_port = CreateUnassociatedIoCompletionPort(Runtime.getRuntime().availableProcessors());
 
         //Create thread pool
@@ -149,6 +150,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
         io_completion_port = INVALID_HANDLE_VALUE;
 
         memory_pool.dispose();
+        memory_pool = null;
       }
     }
   }
@@ -186,8 +188,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //    completion port, the function stores information about the failed operation in the variables pointed to by
       //    lpNumberOfBytes, lpCompletionKey, and lpOverlapped. To get extended error information, call GetLastError.
       if (!GetQueuedCompletionStatus(completion_port, pBytesTransferred, pCompletionKey, ppOverlapped, INFINITE)) {
-        int err;
-        switch(err = GetLastError()) {
+        switch(GetLastError()) {
           //If a call to GetQueuedCompletionStatus fails because the completion port handle associated with it is
           //closed while the call is outstanding, the function returns FALSE, *lpOverlapped will be NULL, and
           //GetLastError will return ERROR_ABANDONED_WAIT_0.
@@ -198,13 +199,10 @@ public class Win32LaunchProcess implements ILaunchProcess {
           //      until a time-out occurs, if specified as a value other than INFINITE.
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
-            System.out.println("ERROR_ABANDONED_WAIT_0");
             return;
           case ERROR_BROKEN_PIPE:
-            System.out.println("ERROR_BROKEN_PIPE");
             continue;
           default:
-            System.out.println("GetQueuedCompletionStatus() error: " + err);
             continue;
         }
       }
@@ -249,21 +247,22 @@ public class Win32LaunchProcess implements ILaunchProcess {
           if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
             switch(GetLastError()) {
               case ERROR_BROKEN_PIPE:
-                System.out.println("GetOverlappedResult(): ERROR_BROKEN_PIPE");
                 break;
               case ERROR_HANDLE_EOF:
-                System.out.println("GetOverlappedResult(): ERROR_HANDLE_EOF");
+                break;
+              default:
                 break;
             }
-            //read(pi);
+
             PinnableMemory.unpin(overlapped.buffer);
+            //read(pi);
 
             continue;
           }
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.out.print(Thread.currentThread().getName() + ": "  + output);
+            System.out.print(output);
           }
 
           PinnableMemory.unpin(overlapped.buffer);
@@ -531,7 +530,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
 
 
-    try { Thread.sleep(10000L); } catch(Throwable t) { }
+    try { Thread.sleep(5000L); } catch(Throwable t) { }
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -549,22 +548,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     //while (ReadFile(port_info.hPipeInst, port_info.oOverlap.buffer, port_info.oOverlap.bufferSize, null, port_info.oOverlap) /*|| lp_bytes_read.getValue() == 0*/) {
     if (ReadFile(port_info.hPipeInst, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
-      //uh-oh! That means the data was processed synchronously. In that case, post it to the completion port for processing.
-      //PostQueuedCompletionStatus(port_info.port, lp_bytes_read.getValue(), port_info.hPipeInst.getPointer(), port_info.oOverlap);
-
-      //final OVERLAPPEDEX req_o = new OVERLAPPEDEX();
-      //req_o.op = OVERLAPPEDEX.OP_REQUEST_READ;
-      //req_o.buffer = null;
-      //req_o.bufferSize = 0;
-
-      System.out.println("ReadFile() synchronous");
-
-      //PostQueuedCompletionStatus(port_info.port, ref.getValue(), port_info.hPipeInst.getPointer(), o);
-
-      //o = new OVERLAPPEDEX();
-      //o.op = OVERLAPPEDEX.OP_READ;
-      //o.buffer = memory_pool.requestSlice();
-      //o.bufferSize = memory_pool.getSliceSize();
+      //uh-oh! That means the data was processed synchronously.
+      //Doing nothing seems to work.
     }
 
     switch(GetLastError()) {
@@ -573,13 +558,11 @@ public class Win32LaunchProcess implements ILaunchProcess {
         break;
       case ERROR_OPERATION_ABORTED:
         //The operation has been cancelled.
-        System.out.println("ABORTED");
         break;
       case ERROR_INVALID_USER_BUFFER:
       case ERROR_NOT_ENOUGH_MEMORY:
         //The ReadFile function may fail with ERROR_INVALID_USER_BUFFER or ERROR_NOT_ENOUGH_MEMORY whenever there are
         //too many outstanding asynchronous I/O requests.
-        System.out.println("ERROR_INVALID_USER_BUFFER");
         break;
       case ERROR_SUCCESS:
         break;
