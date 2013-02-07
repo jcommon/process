@@ -205,6 +205,7 @@ public class Kernel32 implements Win32Library {
     , ERROR_OPERATION_ABORTED   = 995
     , ERROR_INVALID_USER_BUFFER = 0x6F8
     , ERROR_NOT_ENOUGH_MEMORY   = 0x8
+    , ERROR_HANDLE_EOF          = 38;
   ;
 
   @SuppressWarnings("unused")
@@ -350,7 +351,7 @@ public class Kernel32 implements Win32Library {
 
     public static native HANDLE CreateEventW(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, WString name);
     @Override
-    public HANDLE CreateEvent(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, String name) { return CreateEventW(security, manual, initial, new WString(name)); }
+    public HANDLE CreateEvent(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, String name) { return CreateEventW(security, manual, initial, name != null ? new WString(name) : null); }
 
     public static native int SetCurrentDirectoryW(final String path);
     @Override

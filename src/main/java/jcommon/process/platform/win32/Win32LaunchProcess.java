@@ -40,9 +40,9 @@ import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
 public class Win32LaunchProcess implements ILaunchProcess {
-  private static final Object io_port_lock = new Object();
-  private static final MemoryBufferPool memory_pool = new MemoryBufferPool(4096, 2, 100 /* Max # of concurrent processes effectively since it won't give any more slices than that. */);
   private static HANDLE io_completion_port = INVALID_HANDLE_VALUE;
+  private static final Object io_port_lock = new Object();
+  private static final MemoryBufferPool memory_pool = new MemoryBufferPool(4096, 3, MemoryBufferPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
   private static final AtomicInteger running_process_count = new AtomicInteger(0);
   private static final AtomicInteger running_thread_count = new AtomicInteger(0);
   private static final ThreadGroup thread_group = new ThreadGroup("external processes");
@@ -73,21 +73,15 @@ public class Win32LaunchProcess implements ILaunchProcess {
   }
 
   private static class IOCompletionPortInformation {
-    OVERLAPPEDEX oOverlap;
     HANDLE port;
     HANDLE hPipeInst;
 
-    public IOCompletionPortInformation(int index, HANDLE hPipeInst, HANDLE port) {
+    public IOCompletionPortInformation(HANDLE hPipeInst, HANDLE port) {
       this.hPipeInst = hPipeInst;
       this.port = port;
-      this.oOverlap = new OVERLAPPEDEX();
-      this.oOverlap.op = OVERLAPPEDEX.OP_READ;
-      this.oOverlap.buffer = memory_pool.requestSlice();
-      this.oOverlap.bufferSize = memory_pool.getSliceSize();
     }
 
     public void dispose() {
-      PinnableMemory.unpin(oOverlap.buffer);
       CloseHandle(hPipeInst);
     }
   }
@@ -125,7 +119,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
         try { thread_pool_barrier_start.await(); } catch(Throwable t) { }
       }
 
-      final IOCompletionPortInformation info = new IOCompletionPortInformation(completion_ports.size(), associate, io_completion_port);
+      final IOCompletionPortInformation info = new IOCompletionPortInformation(associate, io_completion_port);
       if (AssociateHandleWithIoCompletionPort(io_completion_port, associate, associate.getPointer())) {
         completion_ports.put(associate, info);
         return info;
@@ -159,7 +153,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     }
   }
 
-  public static void postThreadStop(int thread_id) {
+  private static void postThreadStop(int thread_id) {
     //Post message to thread asking him to exit.
     final OVERLAPPEDEX o = new OVERLAPPEDEX();
     o.op = OVERLAPPEDEX.OP_EXITTHREAD;
@@ -174,9 +168,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
     IntByReference pCompletionKey = new IntByReference();
     int bytes_transferred;
     Pointer pOverlapped;
-    //PortInfo pi;
-    boolean isImmediate;
-    ByteBuffer bb = ByteBuffer.allocateDirect(4096);
     IOCompletionPortInformation pi;
 
     while(!ti.please_stop) {
@@ -195,7 +186,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //    completion port, the function stores information about the failed operation in the variables pointed to by
       //    lpNumberOfBytes, lpCompletionKey, and lpOverlapped. To get extended error information, call GetLastError.
       if (!GetQueuedCompletionStatus(completion_port, pBytesTransferred, pCompletionKey, ppOverlapped, INFINITE)) {
-        switch(GetLastError()) {
+        int err;
+        switch(err = GetLastError()) {
           //If a call to GetQueuedCompletionStatus fails because the completion port handle associated with it is
           //closed while the call is outstanding, the function returns FALSE, *lpOverlapped will be NULL, and
           //GetLastError will return ERROR_ABANDONED_WAIT_0.
@@ -206,9 +198,14 @@ public class Win32LaunchProcess implements ILaunchProcess {
           //      until a time-out occurs, if specified as a value other than INFINITE.
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
+            System.out.println("ERROR_ABANDONED_WAIT_0");
             return;
+          case ERROR_BROKEN_PIPE:
+            System.out.println("ERROR_BROKEN_PIPE");
+            continue;
           default:
-            break;
+            System.out.println("GetQueuedCompletionStatus() error: " + err);
+            continue;
         }
       }
 
@@ -221,6 +218,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //If we've received a message asking to break out of the thread, then loop back and around
       //and check that our flag has been set. If so, then it's time to go!
       if (overlapped.op == OVERLAPPEDEX.OP_EXITTHREAD) {
+        PinnableMemory.unpin(overlapped.buffer);
+
         //The completion key will be an integer id indicating the thread that this message is
         //intended for. If the ids match, then get out of here, otherwise relay the message.
         final int thread_id = pCompletionKey.getValue();
@@ -228,6 +227,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           continue;
         } else {
           postThreadStop(thread_id);
+          break;
         }
       }
 
@@ -239,26 +239,163 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
       //If, for some unknown reason, we are processing an event for a port we haven't seen before,
       //then go ahead and ignore it.
-      if ((pi = completion_ports.get(port)) == null)
+      if ((pi = completion_ports.get(port)) == null) {
+        PinnableMemory.unpin(overlapped.buffer);
         continue;
+      }
 
       switch(overlapped.op) {
         case OVERLAPPEDEX.OP_READ:
-          if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false))
+          if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
+            switch(GetLastError()) {
+              case ERROR_BROKEN_PIPE:
+                System.out.println("GetOverlappedResult(): ERROR_BROKEN_PIPE");
+                break;
+              case ERROR_HANDLE_EOF:
+                System.out.println("GetOverlappedResult(): ERROR_HANDLE_EOF");
+                break;
+            }
+            //read(pi);
+            PinnableMemory.unpin(overlapped.buffer);
+
             continue;
+          }
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.out.print(output);
+            System.out.print(Thread.currentThread().getName() + ": "  + output);
           }
+
+          PinnableMemory.unpin(overlapped.buffer);
+
           //Schedule our next read.
           read(pi);
 
           break;
-        case OVERLAPPEDEX.OP_MANUAL_READ:
+        case OVERLAPPEDEX.OP_REQUEST_READ:
+          PinnableMemory.unpin(overlapped.buffer);
           read(pi);
           break;
       }
+    }
+  }
+
+  private static int indexOfAny(final String value, final String lookingFor) {
+    for(int i = 0; i < lookingFor.length(); ++i) {
+      int index = lookingFor.indexOf(lookingFor.charAt(i));
+      if (index >= 0)
+        return index;
+    }
+    return -1;
+  }
+
+  private static void fill(final StringBuilder sb, final char c, final int times) {
+    if (times < 0)
+      return;
+
+    for(int i = 0; i < times; ++i) {
+      sb.append(c);
+    }
+  }
+
+  /**
+   * Attempt to discover if an executable is cmd.exe or not. If it
+   * is, then we'll need to (later on) specially encode its parameters.
+   */
+  private static boolean isCmdExe(final String executable) {
+    return (
+         "\"cmd.exe\"".equalsIgnoreCase(executable)
+      || "\"cmd\"".equalsIgnoreCase(executable)
+      || "cmd.exe".equalsIgnoreCase(executable)
+      || "cmd".equalsIgnoreCase(executable)
+    );
+  }
+
+  /**
+   * When parsing the command line for cmd.exe, special care must be taken
+   * to escape certain meta characters to avoid malicious attempts to inject
+   * commands.
+   *
+   * All meta characters will have a '^' placed in front of them which instructs
+   * cmd.exe to interpret the next character literally.
+   */
+  private static boolean isCmdExeMetaCharacter(final char c) {
+    return (
+         c == '('
+      || c == ')'
+      || c == '%'
+      || c == '!'
+      || c == '^'
+      || c == '\"'
+      || c == '<'
+      || c == '>'
+      || c == '&'
+      || c == '|'
+    );
+  }
+
+  /**
+   * Encodes a string for proper interpretation by CreateProcess().
+   *
+   * @see <a href="http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx">http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx</a>
+   */
+  private static String encode(final boolean is_cmd_exe, final String arg) {
+    final boolean force = false;
+    if (!force && !"".equals(arg) && indexOfAny(arg, " \t\n\11\"") < 0) {
+      return arg;
+    } else {
+      final int len = arg.length();
+      final StringBuilder sb = new StringBuilder(len);
+
+      if (is_cmd_exe) {
+        sb.append('^');
+      }
+
+      sb.append('\"');
+
+      char c;
+      int number_backslashes;
+
+      for(int i = 0; i < len; ++i) {
+        number_backslashes = 0;
+
+        while(i < len && '\\' == arg.charAt(i)) {
+          ++i;
+          ++number_backslashes;
+        }
+
+        c = arg.charAt(i);
+
+        if (i == len) {
+          //Escape all backslashes, but let the terminating
+          //double quotation mark we add below be interpreted
+          //as a metacharacter.
+          fill(sb, '\\', number_backslashes * 2);
+          break;
+        } else if (c == '\"') {
+          //Escape all backslashes and the following
+          //double quotation mark.
+          fill(sb, '\\', number_backslashes * 2 + 1);
+          if (is_cmd_exe) {
+            sb.append('^');
+          }
+          sb.append(c);
+        } else {
+          //Backslashes aren't special here.
+          fill(sb, '\\', number_backslashes);
+          if (is_cmd_exe && isCmdExeMetaCharacter(c)) {
+            sb.append('^');
+          }
+          sb.append(c);
+        }
+      }
+
+      if (is_cmd_exe) {
+        sb.append('^');
+      }
+
+      sb.append('\"');
+      return sb.toString();
     }
   }
 
@@ -278,29 +415,14 @@ public class Win32LaunchProcess implements ILaunchProcess {
     }
 
     final StringBuilder sb = new StringBuilder(size + (args.length * 3 /* Space and beginning and ending quotes */));
-    for(int i = 0; i < args.length; ++i) {
-      final String arg = args[i];
-        //boolean  is_quoted_with_double_quotes = arg.startsWith("\"");
-        //boolean  is_quoted_with_single_quote = arg.startsWith("\'");
-        //boolean is_quoted = is_quoted_with_double_quotes || is_quoted_with_single_quote;
-        //boolean ends_correctly = (is_quoted_with_double_quotes && arg.endsWith("\"")) || (is_quoted_with_single_quote && arg.endsWith("\'"));
-        //
-        //if (!ends_correctly) {
-        //  throw new IllegalArgumentException("Malformed argument: " + arg + ". The ending character should match the beginning single or double quote.");
-        //}
-        //
-        //if (!is_quoted)
-        //  sb.append("\"");
-        //
-        //sb.append(arg);
-        //
-        //if (!is_quoted)
-        //  sb.append("\"");
-      sb.append(arg);
+    final String executable = encode(false, args[0].trim());
+    final boolean is_cmd_exe = isCmdExe(executable);
 
+    sb.append(executable);
+    for(int i = 1; i < args.length; ++i) {
       //Separate each argument with a space.
-      if (i != args.length - 1)
-        sb.append(' ');
+      sb.append(' ');
+      sb.append(encode(!is_cmd_exe ? false : args[i].startsWith("/") ? false : true, args[i]));
     }
 
     //Validate total length of the arguments.
@@ -308,14 +430,16 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalArgumentException("The complete command line cannot exceed " + MAX_COMMAND_LINE_SIZE + " characters.");
     }
 
+
+
+    final HANDLEByReference g_hChildStd_OUT_Rd = new HANDLEByReference();
+    final HANDLEByReference g_hChildStd_OUT_Wr = new HANDLEByReference();
+
     //Setup pipes for stdout/stderr/stdin redirection.
-    // Set the bInheritHandle flag so pipe handles are inherited.
-    SECURITY_ATTRIBUTES saAttr = new SECURITY_ATTRIBUTES();
+    //Set the bInheritHandle flag so pipe handles are inherited.
+    final SECURITY_ATTRIBUTES saAttr = new SECURITY_ATTRIBUTES();
     saAttr.bInheritHandle = true;
     saAttr.lpSecurityDescriptor = null;
-
-    HANDLEByReference g_hChildStd_OUT_Rd = new HANDLEByReference();
-    HANDLEByReference g_hChildStd_OUT_Wr = new HANDLEByReference();
 
     // Create a pipe for the child process's STDOUT.
 
@@ -325,8 +449,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     // Ensure the read handle to the pipe for STDOUT is not inherited.
 
-    HANDLE h_child_read_std_out = g_hChildStd_OUT_Rd.getValue();
-    HANDLE h_child_write_std_out = g_hChildStd_OUT_Wr.getValue();
+    final HANDLE h_child_read_std_out = g_hChildStd_OUT_Rd.getValue();
+    final HANDLE h_child_write_std_out = g_hChildStd_OUT_Wr.getValue();
 
     if (!SetHandleInformation(h_child_read_std_out, HANDLE_FLAG_INHERIT, 0)) {
       CloseHandle(h_child_read_std_out);
@@ -334,8 +458,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to ensure the pipe's stdout read handle is not inherited.");
     }
 
-    HANDLEByReference g_hChildStd_IN_Rd = new HANDLEByReference();
-    HANDLEByReference g_hChildStd_IN_Wr = new HANDLEByReference();
+    final HANDLEByReference g_hChildStd_IN_Rd = new HANDLEByReference();
+    final HANDLEByReference g_hChildStd_IN_Wr = new HANDLEByReference();
 
     // Create a pipe for the child process's STDIN.
 
@@ -347,8 +471,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     // Ensure the write handle to the pipe for STDIN is not inherited.
 
-    HANDLE h_child_read_std_in = g_hChildStd_IN_Rd.getValue();
-    HANDLE h_child_write_std_in = g_hChildStd_IN_Wr.getValue();
+    final HANDLE h_child_read_std_in = g_hChildStd_IN_Rd.getValue();
+    final HANDLE h_child_write_std_in = g_hChildStd_IN_Wr.getValue();
 
     if (!SetHandleInformation(h_child_write_std_in, HANDLE_FLAG_INHERIT, 0)) {
       CloseHandle(h_child_read_std_out);
@@ -397,68 +521,50 @@ public class Win32LaunchProcess implements ILaunchProcess {
     //Close out the child process' stdout write.
     CloseHandle(h_child_write_std_out);
 
-//    ByteBuffer bb = ByteBuffer.allocateDirect(4096);
-//    IntByReference lp_bytes_read = new IntByReference();
-//    IntByReference lp_bytes_written = new IntByReference();
-//    HANDLE hParentStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
     read(port_info);
-//    if (!ReadFile(h_child_read_std_out, port_info.bbRead, port_info.bbRead.capacity(), lp_bytes_read, port_info.oOverlap) || lp_bytes_read.getValue() == 0) {
-//      System.out.println("UNABLE TO READ FILE :(");
-//    }
-//
-//    System.out.println("READ: " + lp_bytes_read.getValue());
-//
-//    switch(GetLastError()) {
-//      case ERROR_IO_PENDING:
-//        System.out.println("PENDING!");
-//        break;
-//      case ERROR_SUCCESS:
-//        System.out.println("SUCCESS?");
-//        break;
-//      default:
-//        System.out.println("???");
-//        break;
-//    }
-
-    //Read from pipe
-//    ByteBuffer bb = ByteBuffer.allocateDirect(4096);
-//    IntByReference lp_bytes_read = new IntByReference();
-//    IntByReference lp_bytes_written = new IntByReference();
-//    HANDLE hParentStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-
-//    while(true) {
-//      if (!ReadFile(h_child_read_std_out, bb, bb.capacity(), lp_bytes_read, null) || lp_bytes_read.getValue() == 0) {
-//        break;
-//      }
-//      if (!WriteFile(hParentStdOut, bb, lp_bytes_read.getValue(), lp_bytes_written, null)) {
-//        break;
-//      }
-//    }
 
     WaitForSingleObject(pi.hProcess, INFINITE);
 
-    CloseHandle(h_child_read_std_out);
+    //CloseHandle(h_child_read_std_out);
 //    CloseHandle(h_child_read_std_in);
 //    CloseHandle(h_child_write_std_in);
 
+
+
+    try { Thread.sleep(10000L); } catch(Throwable t) { }
+
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-
     releaseSharedIOCompletionPort(port_info);
 
     return false;
   }
 
   private static void read(IOCompletionPortInformation port_info) {
-    if (ReadFile(port_info.hPipeInst, port_info.oOverlap.buffer, port_info.oOverlap.bufferSize, null, port_info.oOverlap) /*|| lp_bytes_read.getValue() == 0*/) {
+    //IntByReference ref = new IntByReference();
+    final OVERLAPPEDEX o = new OVERLAPPEDEX();
+    o.op = OVERLAPPEDEX.OP_READ;
+    o.buffer = memory_pool.requestSlice();
+    o.bufferSize = memory_pool.getSliceSize();
+
+    //while (ReadFile(port_info.hPipeInst, port_info.oOverlap.buffer, port_info.oOverlap.bufferSize, null, port_info.oOverlap) /*|| lp_bytes_read.getValue() == 0*/) {
+    if (ReadFile(port_info.hPipeInst, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
       //uh-oh! That means the data was processed synchronously. In that case, post it to the completion port for processing.
       //PostQueuedCompletionStatus(port_info.port, lp_bytes_read.getValue(), port_info.hPipeInst.getPointer(), port_info.oOverlap);
-      OVERLAPPEDEX o = new OVERLAPPEDEX();
-      o.op = OVERLAPPEDEX.OP_MANUAL_READ;
-      o.buffer = null;
-      o.bufferSize = 0;
-      PostQueuedCompletionStatus(port_info.port, 0, port_info.hPipeInst.getPointer(), o);
-      return;
+
+      //final OVERLAPPEDEX req_o = new OVERLAPPEDEX();
+      //req_o.op = OVERLAPPEDEX.OP_REQUEST_READ;
+      //req_o.buffer = null;
+      //req_o.bufferSize = 0;
+
+      System.out.println("ReadFile() synchronous");
+
+      //PostQueuedCompletionStatus(port_info.port, ref.getValue(), port_info.hPipeInst.getPointer(), o);
+
+      //o = new OVERLAPPEDEX();
+      //o.op = OVERLAPPEDEX.OP_READ;
+      //o.buffer = memory_pool.requestSlice();
+      //o.bufferSize = memory_pool.getSliceSize();
     }
 
     switch(GetLastError()) {
@@ -467,11 +573,13 @@ public class Win32LaunchProcess implements ILaunchProcess {
         break;
       case ERROR_OPERATION_ABORTED:
         //The operation has been cancelled.
+        System.out.println("ABORTED");
         break;
       case ERROR_INVALID_USER_BUFFER:
       case ERROR_NOT_ENOUGH_MEMORY:
         //The ReadFile function may fail with ERROR_INVALID_USER_BUFFER or ERROR_NOT_ENOUGH_MEMORY whenever there are
         //too many outstanding asynchronous I/O requests.
+        System.out.println("ERROR_INVALID_USER_BUFFER");
         break;
       case ERROR_SUCCESS:
         break;
@@ -697,7 +805,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     public static final int
         OP_OPEN                       = 0
       , OP_READ                       = 1
-      , OP_MANUAL_READ                = 2
+      , OP_REQUEST_READ               = 2
       , OP_WRITE                      = 3
       , OP_WRITE_IMMEDIATE            = 4
       , OP_CLOSE                      = 5

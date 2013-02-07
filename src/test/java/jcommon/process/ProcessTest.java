@@ -23,20 +23,47 @@ import jcommon.process.platform.ILaunchProcess;
 import jcommon.process.platform.win32.Win32LaunchProcess;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
+
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
   @Test
-  public void testLaunchProcess() {
-    Extract.extractAllResources();
-
-    ILaunchProcess p = new Win32LaunchProcess();
+  public void testLaunchProcess() throws Throwable {
+    final ILaunchProcess p = new Win32LaunchProcess();
+    final int concurrent_processes = 3;
+    final CyclicBarrier start_barrier = new CyclicBarrier(concurrent_processes + 1);
+    final CyclicBarrier stop_barrier = new CyclicBarrier(concurrent_processes + 1);
 
     //p.launch("cmd.exe", "/c", "echo", "%PATH%");
-    for(int i = 0; i < 100; ++i) {
-      p.launch("cmd.exe", "/c", "echo", "blah");
+    //p.launch(Resources.STDOUT_1, "how", "are", "you");
+
+    for(int i = 0; i < concurrent_processes; ++i) {
+      final int idx = i;
+      final Thread t = new Thread (new Runnable() {
+        @Override
+        public void run() {
+          try {
+            start_barrier.await();
+            p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (idx + 1), "4000");
+            stop_barrier.await();
+          } catch(Throwable t) {
+            t.printStackTrace();
+          }
+        }
+      });
+      t.setDaemon(false);
+      t.start();
+
+      //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
+      //p.launch(Resources.STDOUT_1, "how", "are", "you");
     }
+
+    start_barrier.await();
+    stop_barrier.await();
+
+    System.out.println(Resources.STDOUT_ECHO_REPEAT);
   }
 }

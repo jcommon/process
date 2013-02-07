@@ -22,13 +22,14 @@ package jcommon.process.api;
 import com.sun.jna.Pointer;
 
 import java.util.Stack;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Allows reuse of memory buffers to prevent memory fragmentation over time.
  */
 public class MemoryBufferPool {
   public static final int
-      DEFAULT_INITIAL_SLICE_COUNT = 2
+      DEFAULT_INITIAL_SLICE_COUNT = (int)(Runtime.getRuntime().availableProcessors() * 1.5)
     , DEFAULT_SLICE_SIZE = 4096
     , DEFAULT_MAX_SLICE_COUNT = 1000
   ;
@@ -41,8 +42,9 @@ public class MemoryBufferPool {
   private final int slice_size;
   private final int max_slice_count;
   private final Object lock = new Object();
-  private Stack<Pointer> used = new Stack<Pointer>();
-  private Stack<Pointer> available = new Stack<Pointer>();
+  private final Stack<Pointer> used = new Stack<Pointer>();
+  private final Stack<Pointer> available = new Stack<Pointer>();
+  private final PinnableMemory.IPinListener pin_listener;
 
   public MemoryBufferPool() {
     this(DEFAULT_SLICE_SIZE, DEFAULT_INITIAL_SLICE_COUNT, DEFAULT_MAX_SLICE_COUNT);
@@ -55,6 +57,17 @@ public class MemoryBufferPool {
   public MemoryBufferPool(int sliceSize, int initialSliceCount, int maxSliceCount) {
     this.slice_size = sliceSize;
     this.max_slice_count = maxSliceCount;
+    this.pin_listener = new PinnableMemory.IPinListener() {
+      @Override
+      public boolean unpinned(final PinnableMemory memory) {
+        //Don't dispose of the memory. We want to manage it ourselves.
+        //Just return it to the pool. Returning false instructs PinnableMemory
+        //to not dispose of the memory.
+        returnToPool(memory);
+        return false;
+      }
+    };
+
     for(int i = 0; i < initialSliceCount; ++i) {
       available.push(allocateSlice());
     }
@@ -98,16 +111,7 @@ public class MemoryBufferPool {
     }
 
     ++slice_count;
-    return PinnableMemory.pin(slice_size, new PinnableMemory.IPinListener() {
-      @Override
-      public boolean unpinned(final PinnableMemory memory) {
-        //Don't dispose of the memory. We want to manage it ourselves.
-        //Just return it to the pool. Returning false instructs PinnableMemory
-        //to not dispose of the memory.
-        returnToPool(memory);
-        return false;
-      }
-    });
+    return PinnableMemory.pin(slice_size, pin_listener);
   }
 
   private void returnToPool(Pointer p) {
