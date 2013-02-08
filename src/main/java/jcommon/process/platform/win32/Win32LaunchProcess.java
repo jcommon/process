@@ -78,20 +78,22 @@ public class Win32LaunchProcess implements ILaunchProcess {
   }
 
   private static class ProcessInformation {
-    HANDLE completion_port;
+    int pid;
+    HANDLE process;
     HANDLE stdout_child_process_read;
     HANDLE stderr_child_process_read;
     HANDLE stdin_child_process_write;
 
-    public ProcessInformation(HANDLE completion_port, HANDLE stdout_child_process_read, HANDLE stderr_child_process_read, HANDLE stdin_child_process_write) {
-      this.completion_port = completion_port;
+    public ProcessInformation(final int pid, final HANDLE process, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write) {
+      this.pid = pid;
+      this.process = process;
       this.stdout_child_process_read = stdout_child_process_read;
       this.stderr_child_process_read = stderr_child_process_read;
       this.stdin_child_process_write = stdin_child_process_write;
     }
   }
 
-  private static ProcessInformation initializeProcess(final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write) {
+  private static boolean initializeIOCompletionPort() {
     synchronized (io_completion_port_lock) {
       if (running_process_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
         memory_pool = new MemoryPool(4096, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
@@ -107,7 +109,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           memory_pool = null;
 
           running_process_count.decrementAndGet();
-          return null;
+          return false;
         }
 
         //Create thread pool
@@ -137,35 +139,39 @@ public class Win32LaunchProcess implements ILaunchProcess {
         //Wait for all threads to start up.
         try { io_completion_port_thread_pool_barrier_start.await(); } catch(Throwable t) { }
       }
+      return true;
+    }
+  }
 
+  private static boolean initializeProcess(final ProcessInformation process_info) {
+    synchronized (io_completion_port_lock) {
       //Associate stdout with the i/o completion port.
-      final ProcessInformation info = new ProcessInformation(io_completion_port, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
-      if (AssociateHandleWithIoCompletionPort(io_completion_port, stdout_child_process_read, stdout_child_process_read.getPointer())) {
-        processes.put(stdout_child_process_read, info);
+      if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stdout_child_process_read, process_info.stdout_child_process_read.getPointer())) {
+        processes.put(process_info.stdout_child_process_read, process_info);
       } else {
-        releaseProcess(info);
-        return null;
+        releaseProcess(process_info);
+        return false;
       }
 
       //Associate stderr with the i/o completion port.
-      if (AssociateHandleWithIoCompletionPort(io_completion_port, stderr_child_process_read, stderr_child_process_read.getPointer())) {
-        processes.put(stderr_child_process_read, info);
+      if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stderr_child_process_read, process_info.stderr_child_process_read.getPointer())) {
+        processes.put(process_info.stderr_child_process_read, process_info);
       } else {
-        releaseProcess(info);
-        return null;
+        releaseProcess(process_info);
+        return false;
       }
 
       //stdin does synchronous writes (for now).
       //
       ////Associate stdin with the i/o completion port.
-      //if (AssociateHandleWithIoCompletionPort(io_completion_port, stdin_child_process_write, stdin_child_process_write.getPointer())) {
-      //  processes.put(stdin_child_process_write, info);
+      //if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stdin_child_process_write, process_info.stdin_child_process_write.getPointer())) {
+      //  processes.put(process_info.stdin_child_process_write, process_info);
       //} else {
-      //  releaseProcess(info);
+      //  releaseProcess(process_info);
       //  return null;
       //}
 
-      return info;
+      return true;
     }
   }
 
@@ -215,7 +221,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     final IntByReference pCompletionKey = new IntByReference();
     int bytes_transferred;
     Pointer pOverlapped;
-    ProcessInformation pi;
+    ProcessInformation process_info;
 
     while(!ti.please_stop) {
       //Retrieve the queued event and then examine it.
@@ -283,7 +289,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
       //If, for some unknown reason, we are processing an event for a port we haven't seen before,
       //then go ahead and ignore it.
-      if ((pi = processes.get(port)) == null) {
+      if ((process_info = processes.get(port)) == null) {
         PinnableMemory.unpin(overlapped.buffer);
         PinnableStruct.unpin(overlapped);
         continue;
@@ -317,14 +323,14 @@ public class Win32LaunchProcess implements ILaunchProcess {
           PinnableStruct.unpin(overlapped);
 
           //Schedule our next read.
-          read(pi.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+          read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
 
           break;
 
         case OVERLAPPEDEX.OP_STDOUT_REQUEST_READ:
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
-          read(pi.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+          read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
           break;
 
         case OVERLAPPEDEX.OP_STDERR_READ:
@@ -353,13 +359,13 @@ public class Win32LaunchProcess implements ILaunchProcess {
           PinnableStruct.unpin(overlapped);
 
           //Schedule our next read.
-          read(pi.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
           break;
         case OVERLAPPEDEX.OP_STDERR_REQUEST_READ:
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
-          read(pi.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
           break;
       }
     }
@@ -613,15 +619,14 @@ public class Win32LaunchProcess implements ILaunchProcess {
     startup_info.hStdOutput       = stdout_child_process_write;
     startup_info.hStdError        = stderr_child_process_write;
 
-    final ProcessInformation process_info = initializeProcess(stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
-    if (process_info == null) {
-      //We don't need to close stdout_child_process_read, stderr_child_process_read, or stdin_child_process_write
-      //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
-      //was unable to initialize properly.
+    if (!initializeIOCompletionPort()) {
+      CloseHandle(stdout_child_process_read);
       CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_read);
       CloseHandle(stderr_child_process_write);
       CloseHandle(stdin_child_process_read);
-      throw new IllegalStateException("Unable to add new process to I/O completion port");
+      CloseHandle(stdin_child_process_write);
+      throw new IllegalStateException("Unable to initialize I/O completion port");
     }
 
     try {
@@ -639,6 +644,17 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to create a process with the following command line: " + command_line, t);
     }
 
+    final ProcessInformation process_info = new ProcessInformation(proc_info.dwProcessId.intValue(), proc_info.hProcess, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
+    if (!initializeProcess(process_info)) {
+      //We don't need to close stdout_child_process_read, stderr_child_process_read, or stdin_child_process_write
+      //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
+      //was unable to initialize properly.
+      CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_write);
+      CloseHandle(stdin_child_process_read);
+      throw new IllegalStateException("Unable to initialize new process");
+    }
+
     final long pid = proc_info.dwProcessId.longValue();
     System.out.println("pid: " + pid);
 
@@ -652,8 +668,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
     CloseHandle(stdin_child_process_read);
 
     //Begin reading.
-    read(process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
-    read(process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+    read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+    read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
     WaitForSingleObject(proc_info.hProcess, INFINITE);
 
@@ -666,7 +682,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     return false;
   }
 
-  private static void read(HANDLE read_pipe, int op) {
+  private static void read(final ProcessInformation process_info, final HANDLE read_pipe, final int op) {
     final OVERLAPPEDEX o = overlapped_pool.requestInstance(
       op,
       memory_pool.requestSlice(),
