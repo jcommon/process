@@ -79,19 +79,19 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
   private static class IOCompletionPortInformation {
     HANDLE port;
-    HANDLE hPipeInst;
+    HANDLE stdout_child_process_read;
+    HANDLE stderr_child_process_read;
+    HANDLE stdin_child_process_write;
 
-    public IOCompletionPortInformation(HANDLE hPipeInst, HANDLE port) {
-      this.hPipeInst = hPipeInst;
+    public IOCompletionPortInformation(HANDLE port, HANDLE stdout_child_process_read, HANDLE stderr_child_process_read, HANDLE stdin_child_process_write) {
       this.port = port;
-    }
-
-    public void dispose() {
-      CloseHandle(hPipeInst);
+      this.stdout_child_process_read = stdout_child_process_read;
+      this.stderr_child_process_read = stderr_child_process_read;
+      this.stdin_child_process_write = stdin_child_process_write;
     }
   }
 
-  private static IOCompletionPortInformation initSharedIOCompletionPort(HANDLE associate) {
+  private static IOCompletionPortInformation initSharedIOCompletionPort(final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write) {
     synchronized (io_port_lock) {
       if (running_process_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
         memory_pool = new MemoryPool(4096, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
@@ -126,21 +126,45 @@ public class Win32LaunchProcess implements ILaunchProcess {
         try { thread_pool_barrier_start.await(); } catch(Throwable t) { }
       }
 
-      final IOCompletionPortInformation info = new IOCompletionPortInformation(associate, io_completion_port);
-      if (AssociateHandleWithIoCompletionPort(io_completion_port, associate, associate.getPointer())) {
-        completion_ports.put(associate, info);
-        return info;
+      //Associate stdout with the i/o completion port.
+      final IOCompletionPortInformation info = new IOCompletionPortInformation(io_completion_port, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
+      if (AssociateHandleWithIoCompletionPort(io_completion_port, stdout_child_process_read, stdout_child_process_read.getPointer())) {
+        completion_ports.put(stdout_child_process_read, info);
       } else {
-        info.dispose();
+        releaseSharedIOCompletionPort(info);
         return null;
       }
+
+      //Associate stderr with the i/o completion port.
+      if (AssociateHandleWithIoCompletionPort(io_completion_port, stderr_child_process_read, stderr_child_process_read.getPointer())) {
+        completion_ports.put(stderr_child_process_read, info);
+      } else {
+        releaseSharedIOCompletionPort(info);
+        return null;
+      }
+
+      //stdin does synchronous writes (for now).
+      //
+      ////Associate stdin with the i/o completion port.
+      //if (AssociateHandleWithIoCompletionPort(io_completion_port, stdin_child_process_write, stdin_child_process_write.getPointer())) {
+      //  completion_ports.put(stdin_child_process_write, info);
+      //} else {
+      //  releaseSharedIOCompletionPort(info);
+      //  return null;
+      //}
+
+      return info;
     }
   }
 
-  private static void releaseSharedIOCompletionPort(IOCompletionPortInformation info) {
+  private static void releaseSharedIOCompletionPort(final IOCompletionPortInformation info) {
     synchronized (io_port_lock) {
-      completion_ports.remove(info.hPipeInst);
-      info.dispose();
+      //completion_ports.remove(info.stdin_child_process_write);
+      completion_ports.remove(info.stderr_child_process_read);
+      completion_ports.remove(info.stdout_child_process_read);
+      CloseHandle(info.stdin_child_process_write);
+      CloseHandle(info.stderr_child_process_read);
+      CloseHandle(info.stdout_child_process_read);
 
       if (io_completion_port != null && running_process_count.decrementAndGet() == 0) {
         for(int i = 0; i < thread_pool.length; ++i) {
@@ -166,17 +190,15 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
   private static void postThreadStop(int thread_id) {
     //Post message to thread asking him to exit.
-    final OVERLAPPEDEX o = new OVERLAPPEDEX();
-    o.op = OVERLAPPEDEX.OP_EXITTHREAD;
-    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, o);
+    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPEDEX.OP_EXITTHREAD));
   }
 
   private static void ioCompletionPortProcessor(final HANDLE completion_port, final ThreadInformation ti) throws Throwable {
-    HANDLE port = new HANDLE();
-    OVERLAPPEDEX overlapped = new OVERLAPPEDEX();
-    IntByReference pBytesTransferred = new IntByReference();
-    PointerByReference ppOverlapped = new PointerByReference();
-    IntByReference pCompletionKey = new IntByReference();
+    final HANDLE port = new HANDLE();
+    final OVERLAPPEDEX overlapped = new OVERLAPPEDEX();
+    final IntByReference pBytesTransferred = new IntByReference();
+    final PointerByReference ppOverlapped = new PointerByReference();
+    final IntByReference pCompletionKey = new IntByReference();
     int bytes_transferred;
     Pointer pOverlapped;
     IOCompletionPortInformation pi;
@@ -254,7 +276,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
       }
 
       switch(overlapped.op) {
-        case OVERLAPPEDEX.OP_READ:
+        case OVERLAPPEDEX.OP_STDOUT_READ:
           if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
             switch(GetLastError()) {
               case ERROR_BROKEN_PIPE:
@@ -281,13 +303,49 @@ public class Win32LaunchProcess implements ILaunchProcess {
           PinnableStruct.unpin(overlapped);
 
           //Schedule our next read.
-          read(pi);
+          read(pi.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
 
           break;
-        case OVERLAPPEDEX.OP_REQUEST_READ:
+
+        case OVERLAPPEDEX.OP_STDOUT_REQUEST_READ:
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
-          read(pi);
+          read(pi.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+          break;
+
+        case OVERLAPPEDEX.OP_STDERR_READ:
+          if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
+            switch(GetLastError()) {
+              case ERROR_BROKEN_PIPE:
+                break;
+              case ERROR_HANDLE_EOF:
+                break;
+              default:
+                break;
+            }
+
+            PinnableMemory.unpin(overlapped.buffer);
+            PinnableStruct.unpin(overlapped);
+
+            continue;
+          }
+
+          if (bytes_transferred > 0) {
+            String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
+            System.err.print(output);
+          }
+
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          //Schedule our next read.
+          read(pi.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+
+          break;
+        case OVERLAPPEDEX.OP_STDERR_REQUEST_READ:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+          read(pi.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
           break;
       }
     }
@@ -443,19 +501,19 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalArgumentException("The complete command line cannot exceed " + MAX_COMMAND_LINE_SIZE + " characters.");
     }
 
-    final HANDLEByReference ptr_stdout_child_process_read = new HANDLEByReference();
-    final HANDLEByReference ptr_stdout_child_process_write = new HANDLEByReference();
-
     //Setup pipes for stdout/stderr/stdin redirection.
     //Set the bInheritHandle flag so pipe handles are inherited.
     final SECURITY_ATTRIBUTES saAttr = new SECURITY_ATTRIBUTES();
     saAttr.bInheritHandle = true;
     saAttr.lpSecurityDescriptor = null;
 
+    final HANDLEByReference ptr_stdout_child_process_read = new HANDLEByReference();
+    final HANDLEByReference ptr_stdout_child_process_write = new HANDLEByReference();
+
     // Create a pipe for the child process's STDOUT.
 
     if (!CreateOverlappedPipe(ptr_stdout_child_process_read, ptr_stdout_child_process_write, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
-      throw new IllegalStateException("Unable to create a pipe fpr the child process' stdout.");
+      throw new IllegalStateException("Unable to create a pipe for the child process' stdout.");
     }
 
     // Ensure the read handle to the pipe for STDOUT is not inherited.
@@ -469,6 +527,28 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to ensure the pipe's stdout read handle is not inherited.");
     }
 
+    final HANDLEByReference ptr_stderr_child_process_read = new HANDLEByReference();
+    final HANDLEByReference ptr_stderr_child_process_write = new HANDLEByReference();
+
+    // Create a pipe for the child process's STDERR.
+
+    if (!CreateOverlappedPipe(ptr_stderr_child_process_read, ptr_stderr_child_process_write, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
+      throw new IllegalStateException("Unable to create a pipe for the child process' stderr.");
+    }
+
+    // Ensure the read handle to the pipe for STDERR is not inherited.
+
+    final HANDLE stderr_child_process_read = ptr_stderr_child_process_read.getValue();
+    final HANDLE stderr_child_process_write = ptr_stderr_child_process_write.getValue();
+
+    if (!SetHandleInformation(stderr_child_process_read, HANDLE_FLAG_INHERIT, 0)) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_read);
+      CloseHandle(stderr_child_process_write);
+      throw new IllegalStateException("Unable to ensure the pipe's stdout read handle is not inherited.");
+    }
+
     final HANDLEByReference ptr_stdin_child_process_read = new HANDLEByReference();
     final HANDLEByReference ptr_stdin_child_process_write = new HANDLEByReference();
 
@@ -477,6 +557,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
     if (!CreatePipe(ptr_stdin_child_process_read, ptr_stdin_child_process_write, saAttr, 0)) {
       CloseHandle(stdout_child_process_read);
       CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_read);
+      CloseHandle(stderr_child_process_write);
       throw new IllegalStateException("Unable to create a pipe for the child process' stdin.");
     }
 
@@ -488,77 +570,96 @@ public class Win32LaunchProcess implements ILaunchProcess {
     if (!SetHandleInformation(stdin_child_process_write, HANDLE_FLAG_INHERIT, 0)) {
       CloseHandle(stdout_child_process_read);
       CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_read);
+      CloseHandle(stderr_child_process_write);
       CloseHandle(stdin_child_process_read);
       CloseHandle(stdin_child_process_write);
       throw new IllegalStateException("Unable to ensure the pipe's stdin write handle is not inherited.");
     }
 
     final String command_line = sb.toString();
-    final STARTUPINFO inf = new STARTUPINFO();
-    final PROCESS_INFORMATION.ByReference pi = new PROCESS_INFORMATION.ByReference();
+    final STARTUPINFO startup_info = new STARTUPINFO();
+    final PROCESS_INFORMATION.ByReference process_info = new PROCESS_INFORMATION.ByReference();
 
-    inf.lpReserved       = null;
-    inf.lpDesktop        = null;
-    inf.lpTitle          = null; /* title in console window */
-    inf.dwX              = new DWORD(0); /* x-coord offset in pixels, only used if STARTF_USEPOSITION is specified */
-    inf.dwY              = new DWORD(0); /* y-coord offset in pixels, only used if STARTF_USEPOSITION is specified */
-    inf.dwXSize          = new DWORD(0); /* width of window in pixels, only used if STARTF_USESIZE is specified */
-    inf.dwYSize          = new DWORD(0); /* height of window in pixels, only used if STARTF_USESIZE is specified */
-    inf.dwXCountChars    = new DWORD(0); /* screen buffer width in char columns, only used if STARTF_USECOUNTCHARS is specified */
-    inf.dwYCountChars    = new DWORD(0); /* screen buffer height in char rows, only used if STARTF_USECOUNTCHARS is specified */
-    inf.dwFillAttribute  = new DWORD(0); /* initial text and background colors for a console window, only used if STARTF_USEFILLATTRIBUTE is specified */
-    inf.dwFlags         |= STARTF_USESTDHANDLES;
-    inf.wShowWindow      = new WORD(0);
-    inf.cbReserved2      = new WORD(0);
-    inf.lpReserved2      = null;
-    inf.hStdInput        = stdin_child_process_read;
-    inf.hStdOutput       = stdout_child_process_write;
-    inf.hStdError        = stdout_child_process_write;
+    startup_info.lpReserved       = null;
+    startup_info.lpDesktop        = null;
+    startup_info.lpTitle          = null; /* title in console window */
+    startup_info.dwX              = new DWORD(0); /* x-coord offset in pixels, only used if STARTF_USEPOSITION is specified */
+    startup_info.dwY              = new DWORD(0); /* y-coord offset in pixels, only used if STARTF_USEPOSITION is specified */
+    startup_info.dwXSize          = new DWORD(0); /* width of window in pixels, only used if STARTF_USESIZE is specified */
+    startup_info.dwYSize          = new DWORD(0); /* height of window in pixels, only used if STARTF_USESIZE is specified */
+    startup_info.dwXCountChars    = new DWORD(0); /* screen buffer width in char columns, only used if STARTF_USECOUNTCHARS is specified */
+    startup_info.dwYCountChars    = new DWORD(0); /* screen buffer height in char rows, only used if STARTF_USECOUNTCHARS is specified */
+    startup_info.dwFillAttribute  = new DWORD(0); /* initial text and background colors for a console window, only used if STARTF_USEFILLATTRIBUTE is specified */
+    startup_info.dwFlags         |= STARTF_USESTDHANDLES;
+    startup_info.wShowWindow      = new WORD(0);
+    startup_info.cbReserved2      = new WORD(0);
+    startup_info.lpReserved2      = null;
+    startup_info.hStdInput        = stdin_child_process_read;
+    startup_info.hStdOutput       = stdout_child_process_write;
+    startup_info.hStdError        = stderr_child_process_write;
 
-    IOCompletionPortInformation port_info = initSharedIOCompletionPort(stdout_child_process_read);
+    final IOCompletionPortInformation port_info = initSharedIOCompletionPort(stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
+    if (port_info == null) {
+      //We don't need to close stdout_child_process_read, stderr_child_process_read, or stdin_child_process_write
+      //b/c those are closed in releaseSharedIOCompletionPort(), called from initSharedIOCompletionPort(), if it
+      //was unable to initialize properly.
+      CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_write);
+      CloseHandle(stdin_child_process_read);
+      throw new IllegalStateException("Unable to add new process to I/O completion port");
+    }
 
     try {
-      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS), Pointer.NULL /* environment block */, null /* current dir */, inf, pi) != 0;
+      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS), Pointer.NULL /* environment block */, null /* current dir */, startup_info, process_info) != 0;
       if (!success) {
         throw new IllegalStateException("Unable to create a process with the following command line: " + command_line);
       }
     } catch(Throwable t) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
+      CloseHandle(stderr_child_process_read);
+      CloseHandle(stderr_child_process_write);
+      CloseHandle(stdin_child_process_read);
+      CloseHandle(stdin_child_process_write);
       throw new IllegalStateException("Unable to create a process with the following command line: " + command_line, t);
     }
 
-    final long pid = pi.dwProcessId.longValue();
+    final long pid = process_info.dwProcessId.longValue();
     System.out.println("pid: " + pid);
 
     //Close out the child process' stdout write.
     CloseHandle(stdout_child_process_write);
 
-    read(port_info);
+    //Close out the child process' stderr write.
+    CloseHandle(stderr_child_process_write);
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    //Close out the child process' stdin write.
+    CloseHandle(stdin_child_process_read);
 
-    //CloseHandle(h_child_read_std_out);
-//    CloseHandle(h_child_read_std_in);
-//    CloseHandle(h_child_write_std_in);
+    //Begin reading.
+    read(port_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+    read(port_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
-
+    WaitForSingleObject(process_info.hProcess, INFINITE);
 
     try { Thread.sleep(5000L); } catch(Throwable t) { }
 
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+    CloseHandle(process_info.hThread);
+    CloseHandle(process_info.hProcess);
     releaseSharedIOCompletionPort(port_info);
 
     return false;
   }
 
-  private static void read(IOCompletionPortInformation port_info) {
+  private static void read(HANDLE read_pipe, int op) {
     final OVERLAPPEDEX o = overlapped_pool.requestInstance(
-      OVERLAPPEDEX.OP_READ,
+      op,
       memory_pool.requestSlice(),
       memory_pool.getSliceSize()
     );
 
-    if (ReadFile(port_info.hPipeInst, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
+    if (ReadFile(read_pipe, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
       //uh-oh! That means the data was processed synchronously.
       //Doing nothing seems to work.
     }
@@ -797,13 +898,14 @@ public class Win32LaunchProcess implements ILaunchProcess {
     }
 
     public static final int
-        OP_OPEN                       = 0
-      , OP_READ                       = 1
-      , OP_REQUEST_READ               = 2
-      , OP_WRITE                      = 3
-      , OP_WRITE_IMMEDIATE            = 4
-      , OP_CLOSE                      = 5
-      , OP_EXITTHREAD                 = 6
+        OP_CONNECT             = 0
+      , OP_STDOUT_READ         = 1
+      , OP_STDOUT_REQUEST_READ = 2
+      , OP_STDERR_READ         = 3
+      , OP_STDERR_REQUEST_READ = 4
+      , OP_STDIN_WRITE         = 5
+      , OP_STDIN_REQUEST_WRITE = 6
+      , OP_EXITTHREAD          = 7
     ;
   }
 
