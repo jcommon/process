@@ -50,7 +50,7 @@ public class ProcessTest {
           public void run() {
             try {
               start_barrier.await();
-              p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (idx + 1), "10");
+              p.launch("cmd.exe", "/c", Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1) + "...........................................................", "10");
               stop_barrier.await();
             } catch(Throwable t) {
               t.printStackTrace();

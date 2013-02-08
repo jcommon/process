@@ -6,6 +6,6 @@ repeat=$2
 x=1
 while [ $x -le $repeat ]
 do
-   echo "$value"
+   echo "M:$x" "$value"
    x=$(( $x + 1 ))
 done

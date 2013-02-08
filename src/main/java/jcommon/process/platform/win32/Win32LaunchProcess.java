@@ -443,10 +443,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalArgumentException("The complete command line cannot exceed " + MAX_COMMAND_LINE_SIZE + " characters.");
     }
 
-
-
-    final HANDLEByReference g_hChildStd_OUT_Rd = new HANDLEByReference();
-    final HANDLEByReference g_hChildStd_OUT_Wr = new HANDLEByReference();
+    final HANDLEByReference ptr_stdout_child_process_read = new HANDLEByReference();
+    final HANDLEByReference ptr_stdout_child_process_write = new HANDLEByReference();
 
     //Setup pipes for stdout/stderr/stdin redirection.
     //Set the bInheritHandle flag so pipe handles are inherited.
@@ -456,42 +454,42 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     // Create a pipe for the child process's STDOUT.
 
-    if (!CreateOverlappedPipe(g_hChildStd_OUT_Rd, g_hChildStd_OUT_Wr, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
+    if (!CreateOverlappedPipe(ptr_stdout_child_process_read, ptr_stdout_child_process_write, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
       throw new IllegalStateException("Unable to create a pipe fpr the child process' stdout.");
     }
 
     // Ensure the read handle to the pipe for STDOUT is not inherited.
 
-    final HANDLE h_child_read_std_out = g_hChildStd_OUT_Rd.getValue();
-    final HANDLE h_child_write_std_out = g_hChildStd_OUT_Wr.getValue();
+    final HANDLE stdout_child_process_read = ptr_stdout_child_process_read.getValue();
+    final HANDLE stdout_child_process_write = ptr_stdout_child_process_write.getValue();
 
-    if (!SetHandleInformation(h_child_read_std_out, HANDLE_FLAG_INHERIT, 0)) {
-      CloseHandle(h_child_read_std_out);
-      CloseHandle(h_child_write_std_out);
+    if (!SetHandleInformation(stdout_child_process_read, HANDLE_FLAG_INHERIT, 0)) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
       throw new IllegalStateException("Unable to ensure the pipe's stdout read handle is not inherited.");
     }
 
-    final HANDLEByReference g_hChildStd_IN_Rd = new HANDLEByReference();
-    final HANDLEByReference g_hChildStd_IN_Wr = new HANDLEByReference();
+    final HANDLEByReference ptr_stdin_child_process_read = new HANDLEByReference();
+    final HANDLEByReference ptr_stdin_child_process_write = new HANDLEByReference();
 
     // Create a pipe for the child process's STDIN.
 
-    if (!CreatePipe(g_hChildStd_IN_Rd, g_hChildStd_IN_Wr, saAttr, 0)) {
-      CloseHandle(h_child_read_std_out);
-      CloseHandle(h_child_write_std_out);
+    if (!CreatePipe(ptr_stdin_child_process_read, ptr_stdin_child_process_write, saAttr, 0)) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
       throw new IllegalStateException("Unable to create a pipe for the child process' stdin.");
     }
 
     // Ensure the write handle to the pipe for STDIN is not inherited.
 
-    final HANDLE h_child_read_std_in = g_hChildStd_IN_Rd.getValue();
-    final HANDLE h_child_write_std_in = g_hChildStd_IN_Wr.getValue();
+    final HANDLE stdin_child_process_read = ptr_stdin_child_process_read.getValue();
+    final HANDLE stdin_child_process_write = ptr_stdin_child_process_write.getValue();
 
-    if (!SetHandleInformation(h_child_write_std_in, HANDLE_FLAG_INHERIT, 0)) {
-      CloseHandle(h_child_read_std_out);
-      CloseHandle(h_child_write_std_out);
-      CloseHandle(h_child_read_std_in);
-      CloseHandle(h_child_write_std_in);
+    if (!SetHandleInformation(stdin_child_process_write, HANDLE_FLAG_INHERIT, 0)) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
+      CloseHandle(stdin_child_process_read);
+      CloseHandle(stdin_child_process_write);
       throw new IllegalStateException("Unable to ensure the pipe's stdin write handle is not inherited.");
     }
 
@@ -513,11 +511,11 @@ public class Win32LaunchProcess implements ILaunchProcess {
     inf.wShowWindow      = new WORD(0);
     inf.cbReserved2      = new WORD(0);
     inf.lpReserved2      = null;
-    inf.hStdInput        = h_child_read_std_in;
-    inf.hStdOutput       = h_child_write_std_out;
-    inf.hStdError        = h_child_write_std_out;
+    inf.hStdInput        = stdin_child_process_read;
+    inf.hStdOutput       = stdout_child_process_write;
+    inf.hStdError        = stdout_child_process_write;
 
-    IOCompletionPortInformation port_info = initSharedIOCompletionPort(h_child_read_std_out);
+    IOCompletionPortInformation port_info = initSharedIOCompletionPort(stdout_child_process_read);
 
     try {
       final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS), Pointer.NULL /* environment block */, null /* current dir */, inf, pi) != 0;
@@ -532,7 +530,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     System.out.println("pid: " + pid);
 
     //Close out the child process' stdout write.
-    CloseHandle(h_child_write_std_out);
+    CloseHandle(stdout_child_process_write);
 
     read(port_info);
 
