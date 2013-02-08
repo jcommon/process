@@ -50,7 +50,7 @@ public class ProcessTest {
           public void run() {
             try {
               start_barrier.await();
-              p.launch("cmd.exe", "/c", idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1) + "...........................................................", "10");
+              p.launch("cmd.exe", "/c", idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "10");
               stop_barrier.await();
             } catch(Throwable t) {
               t.printStackTrace();

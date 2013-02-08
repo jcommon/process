@@ -200,6 +200,7 @@ public class Kernel32 implements Win32Library {
     , ERROR_IO_INCOMPLETE       = 996
     , ERROR_IO_PENDING          = 997
     , ERROR_BROKEN_PIPE         = 109
+    , ERROR_PROC_NOT_FOUND      = 127
     , ERROR_MORE_DATA           = 234
     , ERROR_FILE_NOT_FOUND      = 2
     , ERROR_ABANDONED_WAIT_0    = 735

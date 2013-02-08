@@ -184,6 +184,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
         CloseHandle(info.stdin_child_process_write);
         CloseHandle(info.stderr_child_process_read);
         CloseHandle(info.stdout_child_process_read);
+        CloseHandle(info.process);
       }
 
       if (io_completion_port != null && running_process_count.decrementAndGet() == 0) {
@@ -252,6 +253,10 @@ public class Win32LaunchProcess implements ILaunchProcess {
             //The associated port has been closed -- abandon further processing.
             return;
           case ERROR_BROKEN_PIPE:
+            port.reuse(Pointer.createConstant(pCompletionKey.getValue()));
+            process_info = processes.get(port);
+            System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetQueuedCompletionStatus)\n");
+            PostQueuedCompletionStatus(completion_port, 0, port.getPointer(), overlapped_pool.requestInstance(OVERLAPPEDEX.OP_CLOSE));
             continue;
           default:
             continue;
@@ -300,6 +305,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
             switch(GetLastError()) {
               case ERROR_BROKEN_PIPE:
+                System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetOverlappedResult(OP_STDOUT_READ))\n");
                 break;
               case ERROR_HANDLE_EOF:
                 break;
@@ -316,7 +322,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.out.print(output);
+            System.out.print("PID: " + process_info.pid + " " + output);
           }
 
           PinnableMemory.unpin(overlapped.buffer);
@@ -337,6 +343,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
           if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
             switch(GetLastError()) {
               case ERROR_BROKEN_PIPE:
+                System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetOverlappedResult(OP_STDERR_READ))\n");
                 break;
               case ERROR_HANDLE_EOF:
                 break;
@@ -352,7 +359,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.err.print(output);
+            System.err.print("PID: " + process_info.pid + " " + output);
           }
 
           PinnableMemory.unpin(overlapped.buffer);
@@ -362,10 +369,18 @@ public class Win32LaunchProcess implements ILaunchProcess {
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
           break;
+
         case OVERLAPPEDEX.OP_STDERR_REQUEST_READ:
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          break;
+
+        case OVERLAPPEDEX.OP_CLOSE:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          System.err.println("\n************** PID: " + process_info.pid + " CLOSE!!\n");
           break;
       }
     }
@@ -644,17 +659,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to create a process with the following command line: " + command_line, t);
     }
 
-    final ProcessInformation process_info = new ProcessInformation(proc_info.dwProcessId.intValue(), proc_info.hProcess, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
-    if (!initializeProcess(process_info)) {
-      //We don't need to close stdout_child_process_read, stderr_child_process_read, or stdin_child_process_write
-      //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
-      //was unable to initialize properly.
-      CloseHandle(stdout_child_process_write);
-      CloseHandle(stderr_child_process_write);
-      CloseHandle(stdin_child_process_read);
-      throw new IllegalStateException("Unable to initialize new process");
-    }
-
     final long pid = proc_info.dwProcessId.longValue();
     System.out.println("pid: " + pid);
 
@@ -667,7 +671,23 @@ public class Win32LaunchProcess implements ILaunchProcess {
     //Close out the child process' stdin write.
     CloseHandle(stdin_child_process_read);
 
-    //Begin reading.
+    //Close out the handle to the new process' main thread.
+    CloseHandle(proc_info.hThread);
+
+    //Associate our new process with the shared i/o completion port.
+    //This is *deliberately* done after the process is created mainly so that we have
+    //the process id and process handle.
+    final ProcessInformation process_info = new ProcessInformation(proc_info.dwProcessId.intValue(), proc_info.hProcess, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
+    if (!initializeProcess(process_info)) {
+      //We don't need to close stdout_child_process_read, stderr_child_process_read, etc.
+      //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
+      //was unable to initialize properly.
+      //Since other handles have already been closed before the call to initializeProcess(),
+      //there's nothing to do -- no need to close anything else out.
+      throw new IllegalStateException("Unable to initialize new process");
+    }
+
+    //Begin reading asynchronously.
     read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
     read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
@@ -675,8 +695,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     try { Thread.sleep(5000L); } catch(Throwable t) { }
 
-    CloseHandle(proc_info.hThread);
-    CloseHandle(proc_info.hProcess);
     releaseProcess(process_info);
 
     return false;
@@ -689,27 +707,38 @@ public class Win32LaunchProcess implements ILaunchProcess {
       memory_pool.getSliceSize()
     );
 
-    if (ReadFile(read_pipe, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
+    if (!ReadFile(read_pipe, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
+      int err;
+      switch(err = GetLastError()) {
+        case ERROR_IO_PENDING:
+          //This is what it should be. Indicates that the operation is being processed asynchronously.
+          break;
+        case ERROR_OPERATION_ABORTED:
+          //The operation has been cancelled.
+          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_OPERATION_ABORTED\n");
+          break;
+        case ERROR_INVALID_USER_BUFFER:
+        case ERROR_NOT_ENOUGH_MEMORY:
+          //The ReadFile function may fail with ERROR_INVALID_USER_BUFFER or ERROR_NOT_ENOUGH_MEMORY whenever there are
+          //too many outstanding asynchronous I/O requests.
+          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_NOT_ENOUGH_MEMORY\n");
+          break;
+        case ERROR_BROKEN_PIPE:
+          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (READ, SENDING TO THREAD POOL)\n");
+          PostQueuedCompletionStatus(io_completion_port, 0, read_pipe.getPointer(), overlapped_pool.requestInstance(OVERLAPPEDEX.OP_CLOSE));
+          break;
+        case ERROR_PROC_NOT_FOUND:
+          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_PROC_NOT_FOUND (READ)\n");
+          break;
+        case ERROR_SUCCESS:
+          break;
+        default:
+          System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (" + err + ")\n");
+          break;
+      }
+    } else {
       //uh-oh! That means the data was processed synchronously.
       //Doing nothing seems to work.
-    }
-
-    switch(GetLastError()) {
-      case ERROR_IO_PENDING:
-        //This is what it should be. Indicates that the operation is being processed asynchronously.
-        break;
-      case ERROR_OPERATION_ABORTED:
-        //The operation has been cancelled.
-        break;
-      case ERROR_INVALID_USER_BUFFER:
-      case ERROR_NOT_ENOUGH_MEMORY:
-        //The ReadFile function may fail with ERROR_INVALID_USER_BUFFER or ERROR_NOT_ENOUGH_MEMORY whenever there are
-        //too many outstanding asynchronous I/O requests.
-        break;
-      case ERROR_SUCCESS:
-        break;
-      default:
-        break;
     }
   }
 
@@ -777,7 +806,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       , OP_STDERR_REQUEST_READ = 4
       , OP_STDIN_WRITE         = 5
       , OP_STDIN_REQUEST_WRITE = 6
-      , OP_EXITTHREAD          = 7
+      , OP_CLOSE               = 7
+      , OP_EXITTHREAD          = 8
     ;
   }
 
