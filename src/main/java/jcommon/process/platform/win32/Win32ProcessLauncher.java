@@ -49,7 +49,7 @@ import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
 @SuppressWarnings("unused")
 public class Win32ProcessLauncher {
-  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null, true, null, null, null);
+  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null, null, true, null, null, null);
 
   private static MemoryPool memory_pool = null;
   private static OverlappedPool overlapped_pool = null;
@@ -91,6 +91,7 @@ public class Win32ProcessLauncher {
   private static class ProcessInformation implements IProcess {
     final int pid;
     final HANDLE process;
+    final HANDLE main_thread;
     final HANDLE stdout_child_process_read;
     final HANDLE stderr_child_process_read;
     final HANDLE stdin_child_process_write;
@@ -104,9 +105,10 @@ public class Win32ProcessLauncher {
     final boolean inherit_parent_environment;
     final IEnvironmentVariable[] environment_variables;
 
-    public ProcessInformation(final int pid, final HANDLE process, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
+    public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
       this.pid = pid;
       this.process = process;
+      this.main_thread = main_thread;
       this.stdout_child_process_read = stdout_child_process_read;
       this.stderr_child_process_read = stderr_child_process_read;
       this.stdin_child_process_write = stdin_child_process_write;
@@ -123,6 +125,14 @@ public class Win32ProcessLauncher {
     @Override
     public boolean isParentEnvironmentInherited() {
       return inherit_parent_environment;
+    }
+
+    /**
+     * @see IProcess#getPID()
+     */
+    @Override
+    public int getPID() {
+      return pid;
     }
 
     /**
@@ -427,7 +437,9 @@ public class Win32ProcessLauncher {
             PinnableMemory.unpin(overlapped.buffer);
             PinnableStruct.unpin(overlapped);
 
-            postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            if (process_info != null) {
+              postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            }
             continue;
           case ERROR_INVALID_HANDLE:
             continue;
@@ -493,6 +505,10 @@ public class Win32ProcessLauncher {
           //Now we start reading.
           read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+
+          //Allow the main thread to begin executing.
+          ResumeThread(process_info.main_thread);
+          CloseHandle(process_info.main_thread);
           break;
         case OVERLAPPEDEX.OP_STDOUT_READ:
           //Get the number of bytes transferred based on what the OS has told us. Be sure and bound
@@ -913,8 +929,11 @@ public class Win32ProcessLauncher {
       throw new IllegalStateException("Unable to initialize I/O completion port");
     }
 
+    //We create the process initially suspended while we setup a connection, inform
+    //interested parties that the process has been created, etc. Once that's done,
+    //we can start read operations.
     try {
-      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS), Pointer.NULL /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
+      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED), Pointer.NULL /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
       if (!success) {
         throw new IllegalStateException("Unable to create a process with the following command line: " + command_line);
       }
@@ -939,15 +958,13 @@ public class Win32ProcessLauncher {
     //Close out the child process' stdin write.
     CloseHandle(stdin_child_process_read);
 
-    //Close out the handle to the new process' main thread.
-    CloseHandle(proc_info.hThread);
-
     //Associate our new process with the shared i/o completion port.
     //This is *deliberately* done after the process is created mainly so that we have
     //the process id and process handle.
     final ProcessInformation process_info = new ProcessInformation(
       proc_info.dwProcessId.intValue(),
       proc_info.hProcess,
+      proc_info.hThread,
       stdout_child_process_read,
       stderr_child_process_read,
       stdin_child_process_write,
@@ -1013,6 +1030,8 @@ public class Win32ProcessLauncher {
         ////the error to determine the next course of action.
         //PinnableStruct.unpin(o);
 
+        //System.out.println("PID " + process_info.getPID() + " CONNECT ERROR " + err + "[" + Thread.currentThread().getName() + "]");
+
         switch(err) {
           case ERROR_PIPE_CONNECTED:
             //The other side is already connected. So send out a new message.
@@ -1068,6 +1087,8 @@ public class Win32ProcessLauncher {
         //the error to determine the next course of action.
         PinnableStruct.unpin(o);
         PinnableMemory.unpin(o.buffer);
+
+        //System.out.println("PID " + process_info.getPID() + " READ ERROR " + err + "[" + Thread.currentThread().getName() + "]");
 
         switch(err) {
           case ERROR_PIPE_CONNECTED:

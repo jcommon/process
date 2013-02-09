@@ -23,6 +23,14 @@ package jcommon.process;
  */
 public interface IProcess {
   /**
+   * Gets the OS-specific process ID.
+   *
+   * @return An integer corresponding to the OS-specific process
+   *         ID.
+   */
+  int getPID();
+
+  /**
    * Provides the full command line with the executable and arguments.
    * It does not include environment variables.
    *

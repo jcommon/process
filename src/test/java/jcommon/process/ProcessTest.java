@@ -48,8 +48,8 @@ public class ProcessTest {
       .andArgument("/c")
       .withListener(
         StandardStreamPipe.create()
-          .redirectStdOut(StandardStream.StdOut)
-          .redirectStdErr(StandardStream.StdErr)
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
       )
     ;
 
@@ -58,7 +58,13 @@ public class ProcessTest {
         .addArguments(time % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (time + 1), "100")
         .addListener(new ProcessListener() {
           @Override
+          protected void processStarted(IProcess process) throws Throwable {
+            //System.out.println("PID " + process.getPID() + " STARTED [" + Thread.currentThread().getName() + "]");
+          }
+
+          @Override
           protected void processStopped(IProcess process) throws Throwable {
+            //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "]");
             stop_latch.countDown();
           }
         })

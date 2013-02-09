@@ -306,6 +306,7 @@ public class Kernel32 implements Win32Library {
 
   public static native int CloseHandle(HANDLE hObject);
   public static native HANDLE GetStdHandle(DWORD nStdHandle);
+  public static native int ResumeThread(HANDLE hThread);
   public static int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CharEncodingSpecific.CreateProcess(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
 
   private static final String LIB = "Kernel32";
