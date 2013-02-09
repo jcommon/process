@@ -30,9 +30,12 @@ import jcommon.process.platform.ILaunchProcess;
 
 import java.nio.charset.Charset;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static jcommon.process.api.JNAUtils.fromSeq;
@@ -41,6 +44,8 @@ import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
 public class Win32LaunchProcess implements ILaunchProcess {
+  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null);
+
   private static MemoryPool memory_pool = null;
   private static OverlappedPool overlapped_pool = null;
 
@@ -55,6 +60,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
   private static final CyclicBarrier io_completion_port_thread_pool_barrier_start = new CyclicBarrier(number_of_processors + 1);
   private static final CyclicBarrier io_completion_port_thread_pool_barrier_stop = new CyclicBarrier(number_of_processors + 1);
   private static final IOCompletionPortThreadInformation[] io_completion_port_thread_pool = new IOCompletionPortThreadInformation[number_of_processors];
+  private static final LinkedBlockingQueue<ProcessInformation> process_dispose_queue = new LinkedBlockingQueue<ProcessInformation>();
   private static final Map<HANDLE, ProcessInformation> processes = new HashMap<HANDLE, ProcessInformation>(2);
 
   private static class IOCompletionPortThreadInformation {
@@ -83,6 +89,9 @@ public class Win32LaunchProcess implements ILaunchProcess {
     HANDLE stdout_child_process_read;
     HANDLE stderr_child_process_read;
     HANDLE stdin_child_process_write;
+    final AtomicBoolean closing = new AtomicBoolean(false);
+    final Object lock = new Object();
+    final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
 
     public ProcessInformation(final int pid, final HANDLE process, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write) {
       this.pid = pid;
@@ -90,6 +99,47 @@ public class Win32LaunchProcess implements ILaunchProcess {
       this.stdout_child_process_read = stdout_child_process_read;
       this.stderr_child_process_read = stderr_child_process_read;
       this.stdin_child_process_write = stdin_child_process_write;
+    }
+
+    public void incrementOps(int op) {
+      synchronized (lock) {
+        outstanding_ops.push(op);
+      }
+    }
+
+    public void decrementOps(int op) {
+      synchronized (lock) {
+        outstanding_ops.removeFirstOccurrence(op);
+      }
+    }
+
+    public void replaceOp(int op, int with) {
+      synchronized (lock) {
+        outstanding_ops.removeFirstOccurrence(op);
+        outstanding_ops.push(with);
+      }
+    }
+
+    public Integer[] outstandingOps() {
+      synchronized (lock) {
+        return outstanding_ops.toArray(new Integer[outstanding_ops.size()]);
+      }
+    }
+
+    public List<String> outstandingOpsAsString() {
+      synchronized (lock) {
+        final LinkedList<String> ret = new LinkedList<String>();
+        for(Integer op : outstanding_ops) {
+          ret.push(OVERLAPPEDEX.nameForOp(op));
+        }
+        return ret;
+      }
+    }
+
+    public boolean anyOutstandingOps() {
+      synchronized (lock) {
+        return outstanding_ops.isEmpty();
+      }
     }
   }
 
@@ -112,9 +162,36 @@ public class Win32LaunchProcess implements ILaunchProcess {
           return false;
         }
 
-        //Create thread pool
+        //Create process reaper.
+        final Thread reaper = new Thread(io_completion_port_thread_group, new Runnable() {
+          @Override
+          public void run() {
+            try {
+              ProcessInformation process_info;
+
+              process_dispose_queue.clear();
+
+              //Block waiting for instances to be placed in the queue.
+              //See closeProcess().
+              while((process_info = process_dispose_queue.take()) != PROCESS_INFORMATION_STOP_SENTINEL) {
+                releaseProcess(process_info);
+              }
+
+            } catch(InterruptedException ie) {
+              //Do nothing.
+            } catch(Throwable t) {
+              t.printStackTrace();
+            } finally {
+            }
+          }
+        }, "reaper");
+        reaper.setDaemon(false);
+        reaper.start();
+
+        //Create thread pool.
         running_io_completion_port_thread_count.set(0);
         io_completion_port_thread_pool_barrier_start.reset();
+        io_completion_port_thread_pool_barrier_stop.reset();
         for(int i = 0; i < io_completion_port_thread_pool.length; ++i) {
           final IOCompletionPortThreadInformation ti = new IOCompletionPortThreadInformation(i);
           final Runnable r = new Runnable() { @Override
@@ -145,42 +222,35 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
   private static boolean initializeProcess(final ProcessInformation process_info) {
     synchronized (io_completion_port_lock) {
-      //Associate stdout with the i/o completion port.
-      if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stdout_child_process_read, process_info.stdout_child_process_read.getPointer())) {
-        processes.put(process_info.stdout_child_process_read, process_info);
-      } else {
-        releaseProcess(process_info);
-        return false;
-      }
-
-      //Associate stderr with the i/o completion port.
-      if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stderr_child_process_read, process_info.stderr_child_process_read.getPointer())) {
-        processes.put(process_info.stderr_child_process_read, process_info);
-      } else {
-        releaseProcess(process_info);
-        return false;
-      }
+      final Pointer ptr_process = process_info.process.getPointer();
 
       //stdin does synchronous writes (for now).
-      //
-      ////Associate stdin with the i/o completion port.
-      //if (AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stdin_child_process_write, process_info.stdin_child_process_write.getPointer())) {
-      //  processes.put(process_info.stdin_child_process_write, process_info);
-      //} else {
-      //  releaseProcess(process_info);
-      //  return null;
-      //}
+      final boolean stdout_associated = AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stdout_child_process_read, ptr_process);
+      final boolean stderr_associated = AssociateHandleWithIoCompletionPort(io_completion_port, process_info.stderr_child_process_read, ptr_process);
+      final boolean success = stdout_associated && stderr_associated;
 
-      return true;
+      if (success) {
+        processes.put(process_info.process, process_info);
+        return true;
+      } else {
+        releaseProcess(process_info);
+        return false;
+      }
+    }
+  }
+
+  private static void closeProcess(final ProcessInformation info) {
+    try {
+      //Ship the instance over to be processed by the reaper.
+      process_dispose_queue.put(info);
+    } catch(InterruptedException ie) {
     }
   }
 
   private static void releaseProcess(final ProcessInformation info) {
     synchronized (io_completion_port_lock) {
       if (info != null) {
-        //processes.remove(info.stdin_child_process_write);
-        processes.remove(info.stderr_child_process_read);
-        processes.remove(info.stdout_child_process_read);
+        processes.remove(info.process);
         CloseHandle(info.stdin_child_process_write);
         CloseHandle(info.stderr_child_process_read);
         CloseHandle(info.stdout_child_process_read);
@@ -192,11 +262,13 @@ public class Win32LaunchProcess implements ILaunchProcess {
           io_completion_port_thread_pool[i].stop();
         }
 
-        //Wait for all threads to stop.
+        //Wait for the threads to stop.
         try { io_completion_port_thread_pool_barrier_stop.await(); } catch(Throwable t) { }
 
-        //All threads have drained out by now.
+        //Ask the reaper to stop.
+        try { process_dispose_queue.put(PROCESS_INFORMATION_STOP_SENTINEL); } catch (Throwable t) { }
 
+        //Closing this could result in an ERROR_ABANDONED_WAIT_0 on threads' GetQueuedCompletionStatus() call.
         CloseHandle(io_completion_port);
         io_completion_port = INVALID_HANDLE_VALUE;
 
@@ -215,7 +287,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
   }
 
   private static void ioCompletionPortProcessor(final HANDLE completion_port, final IOCompletionPortThreadInformation ti) throws Throwable {
-    final HANDLE port = new HANDLE();
+    final HANDLE process = new HANDLE();
     final OVERLAPPEDEX overlapped = new OVERLAPPEDEX();
     final IntByReference pBytesTransferred = new IntByReference();
     final PointerByReference ppOverlapped = new PointerByReference();
@@ -223,6 +295,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     int bytes_transferred;
     Pointer pOverlapped;
     ProcessInformation process_info;
+    int err;
 
     while(!ti.please_stop) {
       //Retrieve the queued event and then examine it.
@@ -240,7 +313,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
       //    completion port, the function stores information about the failed operation in the variables pointed to by
       //    lpNumberOfBytes, lpCompletionKey, and lpOverlapped. To get extended error information, call GetLastError.
       if (!GetQueuedCompletionStatus(completion_port, pBytesTransferred, pCompletionKey, ppOverlapped, INFINITE)) {
-        switch(GetLastError()) {
+        err = GetLastError();
+        switch(err) {
           //If a call to GetQueuedCompletionStatus fails because the completion port handle associated with it is
           //closed while the call is outstanding, the function returns FALSE, *lpOverlapped will be NULL, and
           //GetLastError will return ERROR_ABANDONED_WAIT_0.
@@ -249,14 +323,22 @@ public class Win32LaunchProcess implements ILaunchProcess {
           //      Closing the completion port handle while a call is outstanding will not result in the previously
           //      stated behavior. The function will continue to wait until an entry is removed from the port or
           //      until a time-out occurs, if specified as a value other than INFINITE.
+          case ERROR_INVALID_HANDLE:
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
             return;
           case ERROR_BROKEN_PIPE:
-            port.reuse(Pointer.createConstant(pCompletionKey.getValue()));
-            process_info = processes.get(port);
-            System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetQueuedCompletionStatus)\n");
-            PostQueuedCompletionStatus(completion_port, 0, port.getPointer(), overlapped_pool.requestInstance(OVERLAPPEDEX.OP_CLOSE));
+            //Other end of pipe has closed. So all outstanding operations at this point must close.
+            //Send a message out indicating that it's time to close.
+
+            process.reuse(Pointer.createConstant(pCompletionKey.getValue()));
+            process_info = processes.get(process);
+
+            overlapped.reuse(ppOverlapped.getValue());
+            PinnableMemory.unpin(overlapped.buffer);
+            PinnableStruct.unpin(overlapped);
+
+            postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
             continue;
           default:
             continue;
@@ -286,101 +368,164 @@ public class Win32LaunchProcess implements ILaunchProcess {
         }
       }
 
-      port.reuse(Pointer.createConstant(pCompletionKey.getValue()));
-
-      //Get the number of bytes transferred based on what the OS has told us. Be sure and bound
-      //it to the buffer size to avoid a corrupted value causing us to read off the end of the buffer.
-      bytes_transferred = Math.max(0, Math.min(pBytesTransferred.getValue(), overlapped.bufferSize));
+      process.reuse(Pointer.createConstant(pCompletionKey.getValue()));
 
       //If, for some unknown reason, we are processing an event for a port we haven't seen before,
       //then go ahead and ignore it.
-      if ((process_info = processes.get(port)) == null) {
+      if ((process_info = processes.get(process)) == null) {
         PinnableMemory.unpin(overlapped.buffer);
         PinnableStruct.unpin(overlapped);
         continue;
       }
 
+      //When we start up, we follow this chain of events:
+      //  CreateProcess() -> OP_INITIATE_CONNECT -> OP_STDOUT_CONNECT -> OP_STDERR_CONNECT -> OP_CONNECTED -> OP_STDOUT_READ, OP_STDERR_READ
+
+      System.err.println("PID: " + process_info.pid + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op));
+
       switch(overlapped.op) {
+        case OVERLAPPEDEX.OP_INITIATE_CONNECT:
+          //Next we connect to stdout.
+          connect(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_CONNECT);
+          break;
+        case OVERLAPPEDEX.OP_STDOUT_CONNECT:
+          //Next we connect to stderr.
+          connect(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_CONNECT);
+          break;
+        case OVERLAPPEDEX.OP_STDERR_CONNECT:
+          //Transition to the connected state.
+          postOpMessage(process_info, OVERLAPPEDEX.OP_CONNECTED);
+          break;
+        case OVERLAPPEDEX.OP_CONNECTED:
+          //Now we start reading.
+          read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+          read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          break;
         case OVERLAPPEDEX.OP_STDOUT_READ:
-          if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
-            switch(GetLastError()) {
-              case ERROR_BROKEN_PIPE:
-                System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetOverlappedResult(OP_STDOUT_READ))\n");
-                break;
-              case ERROR_HANDLE_EOF:
-                break;
-              default:
-                break;
-            }
+          //Get the number of bytes transferred based on what the OS has told us. Be sure and bound
+          //it to the buffer size to avoid a corrupted value causing us to read off the end of the buffer.
+          bytes_transferred = Math.max(0, Math.min(pBytesTransferred.getValue(), overlapped.bufferSize));
 
-            PinnableMemory.unpin(overlapped.buffer);
+          if (!GetOverlappedResult(process_info.stdout_child_process_read, pOverlapped, pBytesTransferred, false)) {
+            err = GetLastError();
+
             PinnableStruct.unpin(overlapped);
-            //read(pi);
+            PinnableMemory.unpin(overlapped.buffer);
 
-            continue;
+            switch(err) {
+              case ERROR_INVALID_HANDLE:
+              case ERROR_HANDLE_EOF:
+              case ERROR_BROKEN_PIPE:
+                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                continue;
+              default:
+                continue;
+            }
           }
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.out.print("PID: " + process_info.pid + " " + output);
+            System.out.print(output);
           }
 
-          PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
+          PinnableMemory.unpin(overlapped.buffer);
 
           //Schedule our next read.
           read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
-
           break;
 
         case OVERLAPPEDEX.OP_STDOUT_REQUEST_READ:
-          PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
+          PinnableMemory.unpin(overlapped.buffer);
+
           read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
           break;
 
         case OVERLAPPEDEX.OP_STDERR_READ:
-          if (!GetOverlappedResult(port, pOverlapped, pBytesTransferred, false)) {
-            switch(GetLastError()) {
-              case ERROR_BROKEN_PIPE:
-                System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (ioCompletionPortProcessor.GetOverlappedResult(OP_STDERR_READ))\n");
-                break;
-              case ERROR_HANDLE_EOF:
-                break;
-              default:
-                break;
-            }
+          //Get the number of bytes transferred based on what the OS has told us. Be sure and bound
+          //it to the buffer size to avoid a corrupted value causing us to read off the end of the buffer.
+          bytes_transferred = Math.max(0, Math.min(pBytesTransferred.getValue(), overlapped.bufferSize));
 
-            PinnableMemory.unpin(overlapped.buffer);
+          if (!GetOverlappedResult(process_info.stderr_child_process_read, pOverlapped, pBytesTransferred, false)) {
+            err = GetLastError();
+
             PinnableStruct.unpin(overlapped);
+            PinnableMemory.unpin(overlapped.buffer);
 
-            continue;
+            switch(err) {
+              case ERROR_INVALID_HANDLE:
+              case ERROR_HANDLE_EOF:
+              case ERROR_BROKEN_PIPE:
+                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                continue;
+              default:
+                continue;
+            }
           }
 
           if (bytes_transferred > 0) {
             String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.err.print("PID: " + process_info.pid + " " + output);
+            System.err.print(output);
           }
 
-          PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
+          PinnableMemory.unpin(overlapped.buffer);
 
           //Schedule our next read.
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
-
           break;
 
         case OVERLAPPEDEX.OP_STDERR_REQUEST_READ:
-          PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
+          PinnableMemory.unpin(overlapped.buffer);
+
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
           break;
 
-        case OVERLAPPEDEX.OP_CLOSE:
+        case OVERLAPPEDEX.OP_PARENT_DISCONNECT:
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
 
-          System.err.println("\n************** PID: " + process_info.pid + " CLOSE!!\n");
+          //Shouldn't be a problem if this comes in after we've initiated a close.
+          //This message will effectively just be ignored.
+
+          if (process_info.closing.compareAndSet(false, true)) {
+            //If this succeeds, then I was the first one to initiate the close.
+            //Other threads/attempts should just continue.
+            postOpMessage(process_info, OVERLAPPEDEX.OP_INITIATE_CLOSE);
+          }
+          break;
+
+        case OVERLAPPEDEX.OP_CHILD_DISCONNECT:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          //Shouldn't be a problem if this comes in after we've initiated a close.
+          //This message will effectively just be ignored.
+
+          if (process_info.closing.compareAndSet(false, true)) {
+            //If this succeeds, then I was the first one to initiate the close.
+            //Other threads/attempts should just continue.
+            postOpMessage(process_info, OVERLAPPEDEX.OP_INITIATE_CLOSE);
+          }
+          break;
+
+        case OVERLAPPEDEX.OP_INITIATE_CLOSE:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          //At this point, this thread should be the only one processing the close operation.
+          //Any other attempts would have been funnelled through the AtomicBoolean on
+          //process_info.closing and would not be allowed to post this message if it has
+          //already done so.
+
+          System.err.println("\n************** PID: " + process_info.pid + " OP_INITIATE_CLOSE \n");
+          closeProcess(process_info);
+          break;
+
+        default:
+          System.err.println("\n************** PID: " + process_info.pid + " UNKNOWN OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + "\n");
           break;
       }
     }
@@ -659,8 +804,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to create a process with the following command line: " + command_line, t);
     }
 
-    final long pid = proc_info.dwProcessId.longValue();
-    System.out.println("pid: " + pid);
+    final int pid = proc_info.dwProcessId.intValue();
 
     //Close out the child process' stdout write.
     CloseHandle(stdout_child_process_write);
@@ -687,59 +831,130 @@ public class Win32LaunchProcess implements ILaunchProcess {
       throw new IllegalStateException("Unable to initialize new process");
     }
 
-    //Begin reading asynchronously.
-    read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
-    read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+    //Initiate the connection process.
+    postOpMessage(process_info, OVERLAPPEDEX.OP_INITIATE_CONNECT);
 
-    WaitForSingleObject(proc_info.hProcess, INFINITE);
+    ////Begin reading asynchronously.
+    //read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+    //read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
-    try { Thread.sleep(5000L); } catch(Throwable t) { }
+    //WaitForSingleObject(proc_info.hProcess, INFINITE);
 
-    releaseProcess(process_info);
+    return true;
+  }
 
+  private static void postOpMessage(final ProcessInformation process_info, final int op) {
+    PostQueuedCompletionStatus(io_completion_port, 0, process_info.process.getPointer(), overlapped_pool.requestInstance(op));
+  }
+
+  private static void connect(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+    for(;;) {
+      if (connect_attempt(process_info, pipe, op)) {
+        return;
+      }
+    }
+  }
+
+  private static boolean connect_attempt(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+    attempt: {
+      //final OVERLAPPEDEX o = overlapped_pool.requestInstance(op);
+
+      //When using the overlapped version...
+      //What should we do if this returns true? Unpin the overlapped instance and then do nothing?
+      //Some discussion on MSDN indicates that even if this returns true, the completion packet should have been
+      //posted.
+
+      //Do not use the overlapped version as recommended by MSDN.
+      if (!ConnectNamedPipe(pipe, null)) {
+        int err = GetLastError();
+        switch(err) {
+          case ERROR_IO_PENDING:
+          case ERROR_PIPE_LISTENING:
+            //Normal operation. Nothing to see here.
+            return true;
+        }
+
+        ////For abnormal completion, clean up pinned instances and re-evaluate
+        ////the error to determine the next course of action.
+        //PinnableStruct.unpin(o);
+
+        switch(err) {
+          case ERROR_PIPE_CONNECTED:
+            //The other side is already connected. So send out a new message.
+            postOpMessage(process_info, op);
+            return true;
+          case ERROR_NO_DATA: //It ended before it even started.
+          case ERROR_OPERATION_ABORTED:
+          case ERROR_INVALID_HANDLE:
+          case ERROR_BROKEN_PIPE:
+            postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            return true;
+          case ERROR_PROC_NOT_FOUND:
+            break attempt;
+          case ERROR_SUCCESS:
+            break attempt;
+          default:
+            System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (connect():" + err + ")\n");
+            break attempt;
+        }
+      } else {
+        postOpMessage(process_info, op);
+      }
+    }
     return false;
   }
 
-  private static void read(final ProcessInformation process_info, final HANDLE read_pipe, final int op) {
-    final OVERLAPPEDEX o = overlapped_pool.requestInstance(
-      op,
-      memory_pool.requestSlice(),
-      memory_pool.getSliceSize()
-    );
-
-    if (!ReadFile(read_pipe, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
-      int err;
-      switch(err = GetLastError()) {
-        case ERROR_IO_PENDING:
-          //This is what it should be. Indicates that the operation is being processed asynchronously.
-          break;
-        case ERROR_OPERATION_ABORTED:
-          //The operation has been cancelled.
-          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_OPERATION_ABORTED\n");
-          break;
-        case ERROR_INVALID_USER_BUFFER:
-        case ERROR_NOT_ENOUGH_MEMORY:
-          //The ReadFile function may fail with ERROR_INVALID_USER_BUFFER or ERROR_NOT_ENOUGH_MEMORY whenever there are
-          //too many outstanding asynchronous I/O requests.
-          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_NOT_ENOUGH_MEMORY\n");
-          break;
-        case ERROR_BROKEN_PIPE:
-          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_BROKEN_PIPE (READ, SENDING TO THREAD POOL)\n");
-          PostQueuedCompletionStatus(io_completion_port, 0, read_pipe.getPointer(), overlapped_pool.requestInstance(OVERLAPPEDEX.OP_CLOSE));
-          break;
-        case ERROR_PROC_NOT_FOUND:
-          System.err.println("\n************** PID: " + process_info.pid + " ERROR: ERROR_PROC_NOT_FOUND (READ)\n");
-          break;
-        case ERROR_SUCCESS:
-          break;
-        default:
-          System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (" + err + ")\n");
-          break;
+  private static void read(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+    for(;;) {
+      if (read_attempt(process_info, pipe, op)) {
+        return;
       }
-    } else {
-      //uh-oh! That means the data was processed synchronously.
-      //Doing nothing seems to work.
     }
+  }
+
+  private static boolean read_attempt(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+    attempt: {
+      final OVERLAPPEDEX o = overlapped_pool.requestInstance(
+        op,
+        memory_pool.requestSlice(),
+        memory_pool.getSliceSize()
+      );
+
+      if (!ReadFile(pipe, o.buffer, o.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
+        int err = GetLastError();
+        switch(err) {
+          case ERROR_IO_PENDING:
+            //Normal operation. Nothing to see here.
+            return true;
+        }
+
+        //For abnormal completion, clean up pinned instances and re-evaluate
+        //the error to determine the next course of action.
+        PinnableStruct.unpin(o);
+        PinnableMemory.unpin(o.buffer);
+
+        switch(err) {
+          case ERROR_PIPE_CONNECTED:
+            //The other side is already connected. So send out a new message.
+            postOpMessage(process_info, op);
+            return true;
+          case ERROR_OPERATION_ABORTED:
+          case ERROR_INVALID_HANDLE:
+          case ERROR_BROKEN_PIPE:
+            postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            return true;
+          case ERROR_INVALID_USER_BUFFER:
+          case ERROR_NOT_ENOUGH_MEMORY:
+          case ERROR_PROC_NOT_FOUND:
+          case ERROR_SUCCESS:
+            break attempt;
+          default:
+            System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (read():" + err + ")\n");
+            break attempt;
+        }
+      }
+    }
+    return false;
   }
 
   public static boolean CreateOverlappedPipe(HANDLEByReference lpReadPipe, HANDLEByReference lpWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize, int dwReadMode, int dwWriteMode) {
@@ -798,16 +1013,81 @@ public class Win32LaunchProcess implements ILaunchProcess {
       read();
     }
 
+    public static String nameForOp(int op) {
+      switch(op) {
+        case OP_INITIATE_CONNECT:
+          return "OP_INITIATE_CONNECT";
+
+        case OP_STDOUT_CONNECT:
+          return "OP_STDOUT_CONNECT";
+        case OP_STDOUT_READ:
+          return "OP_STDOUT_READ";
+        case OP_STDOUT_REQUEST_READ:
+          return "OP_STDOUT_REQUEST_READ";
+        case OP_STDOUT_CLOSE:
+          return "OP_STDOUT_CLOSE";
+
+        case OP_STDERR_CONNECT:
+          return "OP_STDERR_CONNECT";
+        case OP_STDERR_READ:
+          return "OP_STDERR_READ";
+        case OP_STDERR_REQUEST_READ:
+          return "OP_STDERR_REQUEST_READ";
+        case OP_STDERR_CLOSE:
+          return "OP_STDERR_CLOSE";
+
+        case OP_STDIN_CONNECT:
+          return "OP_STDIN_CONNECT";
+        case OP_STDIN_WRITE:
+          return "OP_STDIN_WRITE";
+        case OP_STDIN_REQUEST_WRITE:
+          return "OP_STDIN_REQUEST_WRITE";
+        case OP_STDIN_CLOSE:
+          return "OP_STDIN_CLOSE";
+
+        case OP_PARENT_DISCONNECT:
+          return "OP_PARENT_DISCONNECT";
+        case OP_CHILD_DISCONNECT:
+          return "OP_CHILD_DISCONNECT";
+
+        case OP_CONNECTED:
+          return "OP_CONNECTED";
+        case OP_INITIATE_CLOSE:
+          return "OP_INITIATE_CLOSE";
+        case OP_CLOSED:
+          return "OP_CLOSED";
+        case OP_EXITTHREAD:
+          return "OP_EXITTHREAD";
+
+        default:
+          return "<UNKNOWN:" + op + ">";
+      }
+    }
+
     public static final int
-        OP_CONNECT             = 0
-      , OP_STDOUT_READ         = 1
-      , OP_STDOUT_REQUEST_READ = 2
-      , OP_STDERR_READ         = 3
-      , OP_STDERR_REQUEST_READ = 4
-      , OP_STDIN_WRITE         = 5
-      , OP_STDIN_REQUEST_WRITE = 6
-      , OP_CLOSE               = 7
-      , OP_EXITTHREAD          = 8
+        OP_INITIATE_CONNECT    =  0
+      , OP_STDOUT_CONNECT      =  1
+      , OP_STDOUT_READ         =  2
+      , OP_STDOUT_REQUEST_READ =  3
+      , OP_STDOUT_CLOSE        =  4
+
+      , OP_STDERR_CONNECT      =  5
+      , OP_STDERR_READ         =  6
+      , OP_STDERR_REQUEST_READ =  7
+      , OP_STDERR_CLOSE        =  8
+
+      , OP_STDIN_CONNECT       =  9
+      , OP_STDIN_WRITE         = 10
+      , OP_STDIN_REQUEST_WRITE = 11
+      , OP_STDIN_CLOSE         = 12
+
+      , OP_PARENT_DISCONNECT   = 13
+      , OP_CHILD_DISCONNECT    = 14
+
+      , OP_CONNECTED           = 15
+      , OP_INITIATE_CLOSE      = 16
+      , OP_CLOSED              = 17
+      , OP_EXITTHREAD          = 18
     ;
   }
 

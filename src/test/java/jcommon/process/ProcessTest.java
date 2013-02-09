@@ -32,13 +32,17 @@ import static org.junit.Assert.assertTrue;
 public class ProcessTest {
   @Test
   public void testLaunchProcess() throws Throwable {
-    final ILaunchProcess p = new Win32LaunchProcess();
-    final int concurrent_processes = 8;
-    final int times = 3;
+    assertTrue(Resources.loadAllResources());
+
+    final int concurrent_processes = 2;
+    final int times = 20;
+
+
 
     for(int time = 0; time < times; ++time) {
       final CyclicBarrier start_barrier = new CyclicBarrier(concurrent_processes + 1);
       final CyclicBarrier stop_barrier = new CyclicBarrier(concurrent_processes + 1);
+
 
       //p.launch("cmd.exe", "/c", "echo", "%PATH%");
       //p.launch(Resources.STDOUT_1, "how", "are", "you");
@@ -49,8 +53,9 @@ public class ProcessTest {
           @Override
           public void run() {
             try {
-              start_barrier.await();
-              p.launch("cmd.exe", "/c", idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "10");
+              if (!new Win32LaunchProcess().launch("cmd.exe", "/c", idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "100")) {
+                System.err.println("########### ERROR LAUNCHING PROCESS");
+              }
               stop_barrier.await();
             } catch(Throwable t) {
               t.printStackTrace();
@@ -63,11 +68,10 @@ public class ProcessTest {
         //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
         //p.launch(Resources.STDOUT_1, "how", "are", "you");
       }
-
-      start_barrier.await();
       stop_barrier.await();
     }
 
-    System.out.println(Resources.STDOUT_ECHO_REPEAT);
+    Thread.sleep(5000L);
+    System.out.println("All done.");
   }
 }

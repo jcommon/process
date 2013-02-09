@@ -200,13 +200,17 @@ public class Kernel32 implements Win32Library {
     , ERROR_IO_INCOMPLETE       = 996
     , ERROR_IO_PENDING          = 997
     , ERROR_BROKEN_PIPE         = 109
+    , ERROR_PIPE_CONNECTED      = 535
     , ERROR_PROC_NOT_FOUND      = 127
     , ERROR_MORE_DATA           = 234
+    , ERROR_NO_DATA             = 232
+    , ERROR_PIPE_LISTENING      = 536
     , ERROR_FILE_NOT_FOUND      = 2
     , ERROR_ABANDONED_WAIT_0    = 735
     , ERROR_OPERATION_ABORTED   = 995
     , ERROR_INVALID_USER_BUFFER = 0x6F8
     , ERROR_NOT_ENOUGH_MEMORY   = 0x8
+    , ERROR_INVALID_HANDLE      = 6
     , ERROR_HANDLE_EOF          = 38;
   ;
 
@@ -290,6 +294,7 @@ public class Kernel32 implements Win32Library {
 
   public static native boolean CreatePipe(HANDLEByReference hReadPipe, HANDLEByReference hWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
   public static HANDLE CreateNamedPipe(String lpName, int dwOpenMode, int dwPipeMode, int nMaxInstances, int nOutBufferSize, int nInBufferSize, int nDefaultTimeOut, SECURITY_ATTRIBUTES lpSecurityAttributes) { return CharEncodingSpecific.CreateNamedPipe(lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes); }
+  public static native boolean ConnectNamedPipe(HANDLE hNamedPipe, OVERLAPPED lpOverlapped);
 
   public static native boolean SetHandleInformation(HANDLE hObject, int dwMask, int dwFlags);
 

@@ -50,6 +50,10 @@ public class Resources {
     , STDOUT_ECHO_REPEAT
   };
 
+  public static boolean loadAllResources() {
+    return ALL != null && ALL.length > 0;
+  }
+
   public static URI uriForNativeResource(final String name) {
     String os_family;
     switch(OSFamily.getSystemOSFamily()) {
