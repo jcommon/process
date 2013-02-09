@@ -323,7 +323,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
           //      Closing the completion port handle while a call is outstanding will not result in the previously
           //      stated behavior. The function will continue to wait until an entry is removed from the port or
           //      until a time-out occurs, if specified as a value other than INFINITE.
-          case ERROR_INVALID_HANDLE:
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
             return;
@@ -339,6 +338,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
             PinnableStruct.unpin(overlapped);
 
             postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            continue;
+          case ERROR_INVALID_HANDLE:
             continue;
           default:
             continue;
@@ -413,10 +414,11 @@ public class Win32LaunchProcess implements ILaunchProcess {
             PinnableMemory.unpin(overlapped.buffer);
 
             switch(err) {
-              case ERROR_INVALID_HANDLE:
               case ERROR_HANDLE_EOF:
               case ERROR_BROKEN_PIPE:
                 postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                continue;
+              case ERROR_INVALID_HANDLE:
                 continue;
               default:
                 continue;
@@ -454,10 +456,11 @@ public class Win32LaunchProcess implements ILaunchProcess {
             PinnableMemory.unpin(overlapped.buffer);
 
             switch(err) {
-              case ERROR_INVALID_HANDLE:
               case ERROR_HANDLE_EOF:
               case ERROR_BROKEN_PIPE:
                 postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                continue;
+              case ERROR_INVALID_HANDLE:
                 continue;
               default:
                 continue;
@@ -885,7 +888,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
             return true;
           case ERROR_NO_DATA: //It ended before it even started.
           case ERROR_OPERATION_ABORTED:
-          case ERROR_INVALID_HANDLE:
           case ERROR_BROKEN_PIPE:
             postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
             return true;
@@ -893,6 +895,8 @@ public class Win32LaunchProcess implements ILaunchProcess {
             break attempt;
           case ERROR_SUCCESS:
             break attempt;
+          case ERROR_INVALID_HANDLE:
+            throw new IllegalStateException("Invalid handle when connecting to a pipe");
           default:
             System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (connect():" + err + ")\n");
             break attempt;
@@ -939,9 +943,10 @@ public class Win32LaunchProcess implements ILaunchProcess {
             postOpMessage(process_info, op);
             return true;
           case ERROR_OPERATION_ABORTED:
-          case ERROR_INVALID_HANDLE:
           case ERROR_BROKEN_PIPE:
             postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+            return true;
+          case ERROR_INVALID_HANDLE:
             return true;
           case ERROR_INVALID_USER_BUFFER:
           case ERROR_NOT_ENOUGH_MEMORY:
