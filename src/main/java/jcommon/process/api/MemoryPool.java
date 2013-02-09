@@ -25,7 +25,7 @@ import com.sun.jna.Pointer;
  * Allows reuse of memory buffers to prevent memory fragmentation over time.
  */
 @SuppressWarnings("unused")
-public class MemoryPool {
+public final class MemoryPool {
   public static final int
       DEFAULT_INITIAL_SLICE_COUNT = (int)(Runtime.getRuntime().availableProcessors() * 1.5)
     , DEFAULT_SLICE_SIZE          = 4096

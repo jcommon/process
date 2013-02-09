@@ -31,6 +31,7 @@ import jcommon.process.api.PinnableMemory;
 import jcommon.process.api.PinnableStruct;
 import jcommon.process.platform.IProcessLauncher;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -146,6 +147,52 @@ public class Win32ProcessLauncher {
     @Override
     public IProcessListener[] getListeners() {
       return listeners;
+    }
+
+    public void notifyStarted() {
+      try {
+        for(IProcessListener listener : listeners) {
+          listener.started(this);
+        }
+      } catch(Throwable t) {
+        notifyError(t);
+      }
+    }
+
+    public void notifyStopped() {
+      try {
+        for(IProcessListener listener : listeners) {
+          listener.stopped(this);
+        }
+      } catch(Throwable t) {
+        notifyError(t);
+      }
+    }
+
+    public void notifyStdOut(final ByteBuffer buffer, final int bufferSize) {
+      try {
+        for(IProcessListener listener : listeners) {
+          listener.stdout(this, buffer, bufferSize);
+        }
+      } catch(Throwable t) {
+        notifyError(t);
+      }
+    }
+
+    public void notifyStdErr(final ByteBuffer buffer, final int bufferSize) {
+      try {
+        for(IProcessListener listener : listeners) {
+          listener.stderr(this, buffer, bufferSize);
+        }
+      } catch(Throwable t) {
+        notifyError(t);
+      }
+    }
+
+    public void notifyError(final Throwable t) {
+      for(IProcessListener listener : listeners) {
+        listener.error(this, t);
+      }
     }
 
     public void incrementOps(int op) {
@@ -425,7 +472,7 @@ public class Win32ProcessLauncher {
       //When we start up, we follow this chain of events:
       //  CreateProcess() -> OP_INITIATE_CONNECT -> OP_STDOUT_CONNECT -> OP_STDERR_CONNECT -> OP_CONNECTED -> OP_STDOUT_READ, OP_STDERR_READ
 
-      System.err.println("PID: " + process_info.pid + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op));
+      //System.err.println("PID: " + process_info.pid + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op));
 
       switch(overlapped.op) {
         case OVERLAPPEDEX.OP_INITIATE_CONNECT:
@@ -441,6 +488,8 @@ public class Win32ProcessLauncher {
           postOpMessage(process_info, OVERLAPPEDEX.OP_CONNECTED);
           break;
         case OVERLAPPEDEX.OP_CONNECTED:
+          process_info.notifyStarted();
+
           //Now we start reading.
           read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
           read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
@@ -469,8 +518,7 @@ public class Win32ProcessLauncher {
           }
 
           if (bytes_transferred > 0) {
-            String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.out.print(output);
+            process_info.notifyStdOut(overlapped.buffer.getByteBuffer(0, bytes_transferred), bytes_transferred);
           }
 
           PinnableStruct.unpin(overlapped);
@@ -511,8 +559,7 @@ public class Win32ProcessLauncher {
           }
 
           if (bytes_transferred > 0) {
-            String output = Charset.defaultCharset().decode(overlapped.buffer.getByteBuffer(0, bytes_transferred)).toString();
-            System.err.print(output);
+            process_info.notifyStdErr(overlapped.buffer.getByteBuffer(0, bytes_transferred), bytes_transferred);
           }
 
           PinnableStruct.unpin(overlapped);
@@ -597,8 +644,10 @@ public class Win32ProcessLauncher {
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
 
-          System.err.println("\n************** PID: " + process_info.pid + " OP_CLOSED \n");
           CloseHandle(process_info.process);
+
+          process_info.notifyStopped();
+
           closeProcess(process_info);
           break;
         default:

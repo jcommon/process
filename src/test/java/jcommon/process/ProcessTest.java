@@ -21,7 +21,9 @@ package jcommon.process;
 
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -32,49 +34,38 @@ public class ProcessTest {
   public void testLaunchProcess() throws Throwable {
     assertTrue(Resources.loadAllResources());
 
-    final int concurrent_processes = 2;
     final int times = 20;
+    final CountDownLatch stop_latch = new CountDownLatch(times);
+
+    //p.launch("cmd.exe", "/c", "echo", "%PATH%");
+    //p.launch(Resources.STDOUT_1, "how", "are", "you");
+
+    //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
+    //p.launch(Resources.STDOUT_1, "how", "are", "you");
 
     final ProcessBuilder builder = ProcessBuilder.create()
       .withExecutable("cmd.exe")
-      .andArgument("/c");
-
+      .andArgument("/c")
+      .withListener(
+        StandardStreamPipe.create()
+          .redirectStdOut(StandardStream.StdOut)
+          .redirectStdErr(StandardStream.StdErr)
+      )
+    ;
 
     for(int time = 0; time < times; ++time) {
-      final CyclicBarrier start_barrier = new CyclicBarrier(concurrent_processes + 1);
-      final CyclicBarrier stop_barrier = new CyclicBarrier(concurrent_processes + 1);
-
-
-      //p.launch("cmd.exe", "/c", "echo", "%PATH%");
-      //p.launch(Resources.STDOUT_1, "how", "are", "you");
-
-      for(int i = 0; i < concurrent_processes; ++i) {
-        final int idx = i;
-        final Thread t = new Thread (new Runnable() {
+      final IProcess process = builder.copy()
+        .addArguments(time % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (time + 1), "100")
+        .addListener(new ProcessListener() {
           @Override
-          public void run() {
-            try {
-              final IProcess process = builder
-                .copy()
-                .addArguments(idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "100")
-                .start();
-
-              stop_barrier.await();
-            } catch(Throwable t) {
-              t.printStackTrace();
-            }
+          protected void processStopped(IProcess process) throws Throwable {
+            stop_latch.countDown();
           }
-        });
-        t.setDaemon(false);
-        t.start();
-
-        //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
-        //p.launch(Resources.STDOUT_1, "how", "are", "you");
-      }
-      stop_barrier.await();
+        })
+        .start();
     }
 
-    Thread.sleep(5000L);
+    stop_latch.await(10L, TimeUnit.MINUTES);
     System.out.println("All done.");
   }
 }

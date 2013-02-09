@@ -29,7 +29,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * Extends {@link com.sun.jna.Memory} and allows you to pin ({@link #pin()}) memory by holding a reference to it until it is
  * unpinned ({@link #unpin()}).
  */
-public class PinnableMemory extends Memory {
+public final class PinnableMemory extends Memory {
   private static final HashMap<Pointer, PinnableMemory> pinned = new HashMap<Pointer, PinnableMemory>(2, 1.0f);
   private static final HashMap<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
   private static final Object pin_lock = new Object();

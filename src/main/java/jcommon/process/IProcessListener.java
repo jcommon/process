@@ -24,8 +24,9 @@ import java.nio.ByteBuffer;
 /**
  */
 public interface IProcessListener {
-  void started(final IProcess process);
-  void stopped(final IProcess process);
-  void stdout(final IProcess process, final int bufferSize, final ByteBuffer buffer);
-  void stderr(final IProcess process, final int bufferSize, final ByteBuffer buffer);
+  void started(final IProcess process) throws Throwable;
+  void stopped(final IProcess process) throws Throwable;
+  void stdout(final IProcess process, final ByteBuffer buffer, final int bytesRead) throws Throwable;
+  void stderr(final IProcess process, final ByteBuffer buffer, final int bytesRead) throws Throwable;
+  void error(final IProcess process, final Throwable t);
 }
