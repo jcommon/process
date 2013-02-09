@@ -22,11 +22,14 @@ package jcommon.process.platform.win32;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
+import jcommon.process.IEnvironmentVariable;
+import jcommon.process.IProcess;
+import jcommon.process.IProcessListener;
 import jcommon.process.api.MemoryPool;
 import jcommon.process.api.ObjectPool;
 import jcommon.process.api.PinnableMemory;
 import jcommon.process.api.PinnableStruct;
-import jcommon.process.platform.ILaunchProcess;
+import jcommon.process.platform.IProcessLauncher;
 
 import java.nio.charset.Charset;
 import java.util.HashMap;
@@ -43,8 +46,9 @@ import static jcommon.process.api.win32.Kernel32.*;
 import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
 
-public class Win32LaunchProcess implements ILaunchProcess {
-  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null);
+@SuppressWarnings("unused")
+public class Win32ProcessLauncher {
+  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null, true, null, null, null);
 
   private static MemoryPool memory_pool = null;
   private static OverlappedPool overlapped_pool = null;
@@ -83,22 +87,65 @@ public class Win32LaunchProcess implements ILaunchProcess {
     }
   }
 
-  private static class ProcessInformation {
-    int pid;
-    HANDLE process;
-    HANDLE stdout_child_process_read;
-    HANDLE stderr_child_process_read;
-    HANDLE stdin_child_process_write;
+  private static class ProcessInformation implements IProcess {
+    final int pid;
+    final HANDLE process;
+    final HANDLE stdout_child_process_read;
+    final HANDLE stderr_child_process_read;
+    final HANDLE stdin_child_process_write;
+
     final AtomicBoolean closing = new AtomicBoolean(false);
     final Object lock = new Object();
     final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
 
-    public ProcessInformation(final int pid, final HANDLE process, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write) {
+    final String[] command_line;
+    final IProcessListener[] listeners;
+    final boolean inherit_parent_environment;
+    final IEnvironmentVariable[] environment_variables;
+
+    public ProcessInformation(final int pid, final HANDLE process, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
       this.pid = pid;
       this.process = process;
       this.stdout_child_process_read = stdout_child_process_read;
       this.stderr_child_process_read = stderr_child_process_read;
       this.stdin_child_process_write = stdin_child_process_write;
+
+      this.command_line = command_line;
+      this.listeners = listeners;
+      this.inherit_parent_environment = inherit_parent_environment;
+      this.environment_variables = environment_variables;
+    }
+
+    /**
+     * @see IProcess#isParentEnvironmentInherited()
+     */
+    @Override
+    public boolean isParentEnvironmentInherited() {
+      return inherit_parent_environment;
+    }
+
+    /**
+     * @see IProcess#getCommandLine()
+     */
+    @Override
+    public String[] getCommandLine() {
+      return command_line;
+    }
+
+    /**
+     * @see IProcess#getEnvironmentVariables()
+     */
+    @Override
+    public IEnvironmentVariable[] getEnvironmentVariables() {
+      return environment_variables;
+    }
+
+    /**
+     * @see IProcess#getListeners()
+     */
+    @Override
+    public IProcessListener[] getListeners() {
+      return listeners;
     }
 
     public void incrementOps(int op) {
@@ -181,7 +228,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
               //Do nothing.
             } catch(Throwable t) {
               t.printStackTrace();
-            } finally {
             }
           }
         }, "reaper");
@@ -205,6 +251,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
               try {
                 io_completion_port_thread_pool_barrier_stop.await();
               } catch(Throwable t) {
+                t.printStackTrace();
               }
             }
           } };
@@ -214,7 +261,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
         }
 
         //Wait for all threads to start up.
-        try { io_completion_port_thread_pool_barrier_start.await(); } catch(Throwable t) { }
+        try { io_completion_port_thread_pool_barrier_start.await(); } catch(Throwable ignored) { }
       }
       return true;
     }
@@ -243,7 +290,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     try {
       //Ship the instance over to be processed by the reaper.
       process_dispose_queue.put(info);
-    } catch(InterruptedException ie) {
+    } catch(InterruptedException ignored) {
     }
   }
 
@@ -251,10 +298,6 @@ public class Win32LaunchProcess implements ILaunchProcess {
     synchronized (io_completion_port_lock) {
       if (info != null) {
         processes.remove(info.process);
-        CloseHandle(info.stdin_child_process_write);
-        CloseHandle(info.stderr_child_process_read);
-        CloseHandle(info.stdout_child_process_read);
-        CloseHandle(info.process);
       }
 
       if (io_completion_port != null && running_process_count.decrementAndGet() == 0) {
@@ -523,10 +566,41 @@ public class Win32LaunchProcess implements ILaunchProcess {
           //process_info.closing and would not be allowed to post this message if it has
           //already done so.
 
-          System.err.println("\n************** PID: " + process_info.pid + " OP_INITIATE_CLOSE \n");
-          closeProcess(process_info);
+          postOpMessage(process_info, OVERLAPPEDEX.OP_STDIN_CLOSE);
           break;
 
+        case OVERLAPPEDEX.OP_STDIN_CLOSE:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          CloseHandle(process_info.stdin_child_process_write);
+          postOpMessage(process_info, OVERLAPPEDEX.OP_STDERR_CLOSE);
+          break;
+
+        case OVERLAPPEDEX.OP_STDERR_CLOSE:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          CloseHandle(process_info.stderr_child_process_read);
+          postOpMessage(process_info, OVERLAPPEDEX.OP_STDOUT_CLOSE);
+          break;
+
+        case OVERLAPPEDEX.OP_STDOUT_CLOSE:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          CloseHandle(process_info.stdout_child_process_read);
+          postOpMessage(process_info, OVERLAPPEDEX.OP_CLOSED);
+          break;
+
+        case OVERLAPPEDEX.OP_CLOSED:
+          PinnableMemory.unpin(overlapped.buffer);
+          PinnableStruct.unpin(overlapped);
+
+          System.err.println("\n************** PID: " + process_info.pid + " OP_CLOSED \n");
+          CloseHandle(process_info.process);
+          closeProcess(process_info);
+          break;
         default:
           System.err.println("\n************** PID: " + process_info.pid + " UNKNOWN OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + "\n");
           break;
@@ -594,8 +668,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
    * @see <a href="http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx">http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx</a>
    */
   private static String encode(final boolean is_cmd_exe, final String arg) {
-    final boolean force = false;
-    if (!force && !"".equals(arg) && indexOfAny(arg, " \t\n\11\"") < 0) {
+    if (!"".equals(arg) && indexOfAny(arg, " \t\n\11\"") < 0) {
       return arg;
     } else {
       final int len = arg.length();
@@ -653,8 +726,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     }
   }
 
-  @Override
-  public boolean launch(String... args) {
+  public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
     if (args == null || args.length <= 1 || "".equals(args[0])) {
       throw new IllegalArgumentException("args cannot be null or empty and provide at least the executable as the first argument.");
     }
@@ -824,7 +896,18 @@ public class Win32LaunchProcess implements ILaunchProcess {
     //Associate our new process with the shared i/o completion port.
     //This is *deliberately* done after the process is created mainly so that we have
     //the process id and process handle.
-    final ProcessInformation process_info = new ProcessInformation(proc_info.dwProcessId.intValue(), proc_info.hProcess, stdout_child_process_read, stderr_child_process_read, stdin_child_process_write);
+    final ProcessInformation process_info = new ProcessInformation(
+      proc_info.dwProcessId.intValue(),
+      proc_info.hProcess,
+      stdout_child_process_read,
+      stderr_child_process_read,
+      stdin_child_process_write,
+      inherit_parent_environment,
+      environment_variables,
+      args,
+      listeners
+    );
+
     if (!initializeProcess(process_info)) {
       //We don't need to close stdout_child_process_read, stderr_child_process_read, etc.
       //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
@@ -843,7 +926,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
 
     //WaitForSingleObject(proc_info.hProcess, INFINITE);
 
-    return true;
+    return process_info;
   }
 
   private static void postOpMessage(final ProcessInformation process_info, final int op) {
@@ -962,6 +1045,7 @@ public class Win32LaunchProcess implements ILaunchProcess {
     return false;
   }
 
+  @SuppressWarnings("all")
   public static boolean CreateOverlappedPipe(HANDLEByReference lpReadPipe, HANDLEByReference lpWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize, int dwReadMode, int dwWriteMode) {
     if (((dwReadMode | dwWriteMode) & (~FILE_FLAG_OVERLAPPED)) != 0) {
       throw new IllegalArgumentException("This method is to be used for overlapped IO only.");

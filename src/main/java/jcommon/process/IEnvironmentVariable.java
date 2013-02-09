@@ -17,8 +17,12 @@
   limitations under the License.
 */
 
-package jcommon.process.platform;
+package jcommon.process;
 
-public interface ILaunchProcess {
-  boolean launch(String... args);
+/**
+ *
+ */
+public interface IEnvironmentVariable {
+  String getName();
+  String getValue();
 }

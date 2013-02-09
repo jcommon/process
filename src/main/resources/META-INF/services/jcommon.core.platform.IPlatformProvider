@@ -1,4 +1,4 @@
 
-#jcommon.process.platform.mac.LaunchProcess #Mac
-#jcommon.process.platform.unix.LaunchProcess #Unix
-#jcommon.process.platform.win32.LaunchProcess #Windows
+jcommon.process.platform.mac.ProcessLauncher #Mac
+jcommon.process.platform.unix.ProcessLauncher #Unix
+jcommon.process.platform.win32.ProcessLauncher #Windows

@@ -19,8 +19,6 @@
 
 package jcommon.process;
 
-import jcommon.process.platform.ILaunchProcess;
-import jcommon.process.platform.win32.Win32LaunchProcess;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -37,6 +35,9 @@ public class ProcessTest {
     final int concurrent_processes = 2;
     final int times = 20;
 
+    final ProcessBuilder builder = ProcessBuilder.create()
+      .withExecutable("cmd.exe")
+      .andArgument("/c");
 
 
     for(int time = 0; time < times; ++time) {
@@ -53,9 +54,11 @@ public class ProcessTest {
           @Override
           public void run() {
             try {
-              if (!new Win32LaunchProcess().launch("cmd.exe", "/c", idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "100")) {
-                System.err.println("########### ERROR LAUNCHING PROCESS");
-              }
+              final IProcess process = builder
+                .copy()
+                .addArguments(idx % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (idx + 1), "100")
+                .start();
+
               stop_barrier.await();
             } catch(Throwable t) {
               t.printStackTrace();
