@@ -21,12 +21,15 @@ package jcommon.process;
 
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
@@ -34,7 +37,9 @@ public class ProcessTest {
   public void testLaunchProcess() throws Throwable {
     assertTrue(Resources.loadAllResources());
 
-    final int times = 20;
+    final int times = 1000;
+    final int message_count = 1;
+    final AtomicInteger start_count = new AtomicInteger(0);
     final CountDownLatch stop_latch = new CountDownLatch(times);
 
     //p.launch("cmd.exe", "/c", "echo", "%PATH%");
@@ -47,7 +52,7 @@ public class ProcessTest {
       .withExecutable("cmd.exe")
       .andArgument("/c")
       .withListener(
-        StandardStreamPipe.create()
+          StandardStreamPipe.create()
           //.redirectStdOut(StandardStream.Null)
           //.redirectStdErr(StandardStream.Null)
       )
@@ -55,23 +60,51 @@ public class ProcessTest {
 
     for(int time = 0; time < times; ++time) {
       final IProcess process = builder.copy()
-        .addArguments(time % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (time + 1), "100")
+        .addArguments(time % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (time + 1), Integer.toString(message_count))
         .addListener(new ProcessListener() {
+          private AtomicInteger counter = new AtomicInteger(0);
+
           @Override
-          protected void processStarted(IProcess process) throws Throwable {
-            //System.out.println("PID " + process.getPID() + " STARTED [" + Thread.currentThread().getName() + "]");
+          protected void processError(IProcess process, Throwable t) {
+            fail("PID " + process.getPID() + ": " + t.getMessage());
           }
 
           @Override
-          protected void processStopped(IProcess process) throws Throwable {
+          protected void processStarted(IProcess process) throws Throwable {
+            //System.out.println("PID " + process.getPID() + " STARTED [" + Thread.currentThread().getName() + "]");
+            start_count.incrementAndGet();
+          }
+
+          @Override
+          protected void processStopped(IProcess process, int exitCode) throws Throwable {
             //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "]");
+            System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
+            //assertEquals(message_count, counter.get());
             stop_latch.countDown();
+          }
+
+          @Override
+          protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
+            final String text = Charset.defaultCharset().decode(buffer).toString();
+            int idx = -1;
+            while((idx = text.indexOf("P", idx + 1)) >= 0)
+              counter.incrementAndGet();
+          }
+
+          @Override
+          protected void stderr(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
+            final String text = Charset.defaultCharset().decode(buffer).toString();
+            int idx = -1;
+            while((idx = text.indexOf("P", idx + 1)) >= 0)
+              counter.incrementAndGet();
           }
         })
         .start();
     }
 
     stop_latch.await(10L, TimeUnit.MINUTES);
+
+    assertEquals(times, start_count.get());
     System.out.println("All done.");
   }
 }

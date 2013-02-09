@@ -96,6 +96,7 @@ public class Win32ProcessLauncher {
     final HANDLE stderr_child_process_read;
     final HANDLE stdin_child_process_write;
 
+    final AtomicBoolean starting = new AtomicBoolean(true);
     final AtomicBoolean closing = new AtomicBoolean(false);
     final Object lock = new Object();
     final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
@@ -169,10 +170,10 @@ public class Win32ProcessLauncher {
       }
     }
 
-    public void notifyStopped() {
+    public void notifyStopped(final int exit_code) {
       try {
         for(IProcessListener listener : listeners) {
-          listener.stopped(this);
+          listener.stopped(this, exit_code);
         }
       } catch(Throwable t) {
         notifyError(t);
@@ -500,15 +501,17 @@ public class Win32ProcessLauncher {
           postOpMessage(process_info, OVERLAPPEDEX.OP_CONNECTED);
           break;
         case OVERLAPPEDEX.OP_CONNECTED:
-          process_info.notifyStarted();
+          if (process_info.starting.compareAndSet(true, false)) {
+            process_info.notifyStarted();
 
-          //Now we start reading.
-          read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
-          read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+            //Now we start reading.
+            read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+            read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
 
-          //Allow the main thread to begin executing.
-          ResumeThread(process_info.main_thread);
-          CloseHandle(process_info.main_thread);
+            //Allow the main thread to begin executing.
+            ResumeThread(process_info.main_thread);
+            CloseHandle(process_info.main_thread);
+          }
           break;
         case OVERLAPPEDEX.OP_STDOUT_READ:
           //Get the number of bytes transferred based on what the OS has told us. Be sure and bound
@@ -660,9 +663,14 @@ public class Win32ProcessLauncher {
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
 
+          WaitForSingleObject(process_info.process, INFINITE);
+
+          final IntByReference exit_code = new IntByReference();
+          GetExitCodeProcess(process_info.process, exit_code);
+
           CloseHandle(process_info.process);
 
-          process_info.notifyStopped();
+          process_info.notifyStopped(exit_code.getValue());
 
           closeProcess(process_info);
           break;
@@ -1099,6 +1107,7 @@ public class Win32ProcessLauncher {
           case ERROR_BROKEN_PIPE:
             postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
             return true;
+          case ERROR_ACCESS_DENIED:
           case ERROR_INVALID_HANDLE:
             return true;
           case ERROR_INVALID_USER_BUFFER:

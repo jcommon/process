@@ -43,7 +43,7 @@ public abstract class ProcessListener implements IProcessListener {
   }
 
   @Override
-  public final void stopped(IProcess process) throws Throwable {
+  public final void stopped(IProcess process, int exitCode) throws Throwable {
     synchronized (buffer_pool_lock) {
       if (running.decrementAndGet() == 0) {
         buffer_pool.dispose();
@@ -51,7 +51,7 @@ public abstract class ProcessListener implements IProcessListener {
       }
     }
 
-    processStopped(process);
+    processStopped(process, exitCode);
   }
 
   @Override
@@ -80,7 +80,7 @@ public abstract class ProcessListener implements IProcessListener {
   }
 
   protected void processStarted(IProcess process) throws Throwable { }
-  protected void processStopped(IProcess process) throws Throwable { }
+  protected void processStopped(IProcess process, int exitCode) throws Throwable { }
   protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void stderr(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void processError(IProcess process, Throwable t) { }

@@ -210,8 +210,14 @@ public class Kernel32 implements Win32Library {
     , ERROR_OPERATION_ABORTED   = 995
     , ERROR_INVALID_USER_BUFFER = 0x6F8
     , ERROR_NOT_ENOUGH_MEMORY   = 0x8
+    , ERROR_ACCESS_DENIED       = 5
     , ERROR_INVALID_HANDLE      = 6
     , ERROR_HANDLE_EOF          = 38;
+  ;
+
+  @SuppressWarnings("unused")
+  public static final int
+      STILL_ACTIVE = 259
   ;
 
   @SuppressWarnings("unused")
@@ -307,6 +313,7 @@ public class Kernel32 implements Win32Library {
   public static native int CloseHandle(HANDLE hObject);
   public static native HANDLE GetStdHandle(DWORD nStdHandle);
   public static native int ResumeThread(HANDLE hThread);
+  public static native int GetExitCodeProcess(HANDLE hProcess, IntByReference lpExitCode);
   public static int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CharEncodingSpecific.CreateProcess(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
 
   private static final String LIB = "Kernel32";
