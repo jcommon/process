@@ -86,6 +86,8 @@ public class StandardStreamPipe extends ProcessListener {
       buffer.get(availablePoolBuffer, 0, chunk_size);
       output.write(availablePoolBuffer, 0, chunk_size);
     }
+
+    buffer.flip();
   }
 
   @Override
@@ -119,5 +121,7 @@ public class StandardStreamPipe extends ProcessListener {
       buffer.get(availablePoolBuffer, 0, chunk_size);
       output.write(availablePoolBuffer, 0, chunk_size);
     }
+
+    buffer.flip();
   }
 }
