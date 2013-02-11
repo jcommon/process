@@ -37,7 +37,7 @@ public class ProcessTest {
   public void testLaunchProcess() throws Throwable {
     assertTrue(Resources.loadAllResources());
 
-    final int times = 1000;
+    final int times = 10;
     final int message_count = 1;
     final AtomicInteger start_count = new AtomicInteger(0);
     final CountDownLatch stop_latch = new CountDownLatch(times);
@@ -45,12 +45,24 @@ public class ProcessTest {
     //p.launch("cmd.exe", "/c", "echo", "%PATH%");
     //p.launch(Resources.STDOUT_1, "how", "are", "you");
 
-    //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1), "4000");
+    //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "4000", "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1));
     //p.launch(Resources.STDOUT_1, "how", "are", "you");
 
-    final ProcessBuilder builder = ProcessBuilder.create()
+    final ProcessBuilder builder_stdout_1 = ProcessBuilder.create()
+      .withExecutable(Resources.STDOUT_1)
+      .andArgument(Integer.toString(message_count))
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+    ;
+
+    final ProcessBuilder builder_stdout_echo_repeat = ProcessBuilder.create()
       .withExecutable("cmd.exe")
       .andArgument("/c")
+      .andArgument(Resources.STDOUT_ECHO_REPEAT)
+      .andArgument(Integer.toString(message_count))
       .withListener(
           StandardStreamPipe.create()
           //.redirectStdOut(StandardStream.Null)
@@ -59,8 +71,8 @@ public class ProcessTest {
     ;
 
     for(int time = 0; time < times; ++time) {
-      final IProcess process = builder.copy()
-        .addArguments(time % 2 == 0 ? Resources.STDOUT_ECHO_REPEAT : Resources.STDERR_ECHO_REPEAT, "P:" + (time + 1), Integer.toString(message_count))
+      final ProcessBuilder proc_builder = builder_stdout_echo_repeat.copy()
+        .addArguments("P:" + (time + 1))
         .addListener(new ProcessListener() {
           private AtomicInteger counter = new AtomicInteger(0);
 
@@ -78,14 +90,15 @@ public class ProcessTest {
           @Override
           protected void processStopped(IProcess process, int exitCode) throws Throwable {
             //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "]");
-            System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
-            //assertEquals(message_count, counter.get());
+            //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
             stop_latch.countDown();
+            assertEquals(message_count, counter.get());
           }
 
           @Override
           protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
             final String text = Charset.defaultCharset().decode(buffer).toString();
+            //System.out.print("PID " + process.getPID() + " " + text);
             int idx = -1;
             while((idx = text.indexOf("P", idx + 1)) >= 0)
               counter.incrementAndGet();
@@ -98,8 +111,8 @@ public class ProcessTest {
             while((idx = text.indexOf("P", idx + 1)) >= 0)
               counter.incrementAndGet();
           }
-        })
-        .start();
+        });
+      final IProcess process = proc_builder.start();
     }
 
     stop_latch.await(10L, TimeUnit.MINUTES);

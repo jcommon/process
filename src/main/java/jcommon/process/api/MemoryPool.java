@@ -28,7 +28,7 @@ import com.sun.jna.Pointer;
 public final class MemoryPool {
   public static final int
       DEFAULT_INITIAL_SLICE_COUNT = (int)(Runtime.getRuntime().availableProcessors() * 1.5)
-    , DEFAULT_SLICE_SIZE          = 4096
+    , DEFAULT_SLICE_SIZE          = 1024
     , DEFAULT_MAX_SLICE_COUNT     = 1000
   ;
 

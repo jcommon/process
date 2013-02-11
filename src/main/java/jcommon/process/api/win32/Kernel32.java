@@ -222,6 +222,11 @@ public class Kernel32 implements Win32Library {
 
   @SuppressWarnings("unused")
   public static final int
+      DUPLICATE_SAME_ACCESS = 0x02
+  ;
+
+  @SuppressWarnings("unused")
+  public static final int
       STATUS_WAIT_0             = 0x00000000
     , STATUS_ABANDONED_WAIT_0   = 0x00000080
   ;
@@ -280,6 +285,7 @@ public class Kernel32 implements Win32Library {
 
   public static native int GetLastError();
 
+  public static native HANDLE GetCurrentProcess();
   public static native int GetCurrentProcessId();
 
   public static HANDLE CreateUnassociatedIoCompletionPort(int concurrencyValue) { return CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, null, concurrencyValue); }
@@ -310,6 +316,7 @@ public class Kernel32 implements Win32Library {
   public static native boolean WriteFile(HANDLE hFile, byte[] lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean WriteFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
 
+  public static native boolean DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, HANDLEByReference lpTargetHandle, int dwDesiredAccess, boolean bInheritHandle, int dwOptions);
   public static native int CloseHandle(HANDLE hObject);
   public static native HANDLE GetStdHandle(DWORD nStdHandle);
   public static native int ResumeThread(HANDLE hThread);

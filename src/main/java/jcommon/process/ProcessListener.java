@@ -35,7 +35,7 @@ public abstract class ProcessListener implements IProcessListener {
   public final void started(IProcess process) throws Throwable {
     synchronized (buffer_pool_lock) {
       if (running.getAndIncrement() == 0) {
-        buffer_pool = new ByteArrayPool(2, 4096);
+        buffer_pool = new ByteArrayPool(2, 1024);
       }
     }
 

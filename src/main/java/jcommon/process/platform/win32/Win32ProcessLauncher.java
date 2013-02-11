@@ -251,7 +251,7 @@ public class Win32ProcessLauncher {
   private static boolean initializeIOCompletionPort() {
     synchronized (io_completion_port_lock) {
       if (running_process_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
-        memory_pool = new MemoryPool(4096, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
+        memory_pool = new MemoryPool(1024, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
         overlapped_pool = new OverlappedPool(number_of_processors);
         io_completion_port = CreateUnassociatedIoCompletionPort(Runtime.getRuntime().availableProcessors());
 
@@ -490,11 +490,11 @@ public class Win32ProcessLauncher {
       switch(overlapped.op) {
         case OVERLAPPEDEX.OP_INITIATE_CONNECT:
           //Next we connect to stdout.
-          connect(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_CONNECT);
+          connect(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_INITIATE_CONNECT, OVERLAPPEDEX.OP_STDOUT_CONNECT);
           break;
         case OVERLAPPEDEX.OP_STDOUT_CONNECT:
           //Next we connect to stderr.
-          connect(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_CONNECT);
+          connect(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDOUT_CONNECT, OVERLAPPEDEX.OP_STDERR_CONNECT);
           break;
         case OVERLAPPEDEX.OP_STDERR_CONNECT:
           //Transition to the connected state.
@@ -840,7 +840,7 @@ public class Win32ProcessLauncher {
 
     // Create a pipe for the child process's STDOUT.
 
-    if (!CreateOverlappedPipe(ptr_stdout_child_process_read, ptr_stdout_child_process_write, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
+    if (!CreateOverlappedPipe(ptr_stdout_child_process_read, ptr_stdout_child_process_write, saAttr, 1024, FILE_FLAG_OVERLAPPED, 0)) {
       throw new IllegalStateException("Unable to create a pipe for the child process' stdout.");
     }
 
@@ -860,7 +860,9 @@ public class Win32ProcessLauncher {
 
     // Create a pipe for the child process's STDERR.
 
-    if (!CreateOverlappedPipe(ptr_stderr_child_process_read, ptr_stderr_child_process_write, saAttr, 4096, FILE_FLAG_OVERLAPPED, 0)) {
+    if (!CreateOverlappedPipe(ptr_stderr_child_process_read, ptr_stderr_child_process_write, saAttr, 1024, FILE_FLAG_OVERLAPPED, 0)) {
+      CloseHandle(stdout_child_process_read);
+      CloseHandle(stdout_child_process_write);
       throw new IllegalStateException("Unable to create a pipe for the child process' stderr.");
     }
 
@@ -1007,15 +1009,15 @@ public class Win32ProcessLauncher {
     PostQueuedCompletionStatus(io_completion_port, 0, process_info.process.getPointer(), overlapped_pool.requestInstance(op));
   }
 
-  private static void connect(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+  private static void connect(final ProcessInformation process_info, final HANDLE pipe, final int current_state, final int next_state) {
     for(;;) {
-      if (connect_attempt(process_info, pipe, op)) {
+      if (connect_attempt(process_info, pipe, current_state, next_state)) {
         return;
       }
     }
   }
 
-  private static boolean connect_attempt(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+  private static boolean connect_attempt(final ProcessInformation process_info, final HANDLE pipe, final int current_state, final int next_state) {
     attempt: {
       //final OVERLAPPEDEX o = overlapped_pool.requestInstance(op);
 
@@ -1043,7 +1045,7 @@ public class Win32ProcessLauncher {
         switch(err) {
           case ERROR_PIPE_CONNECTED:
             //The other side is already connected. So send out a new message.
-            postOpMessage(process_info, op);
+            postOpMessage(process_info, next_state);
             return true;
           case ERROR_NO_DATA: //It ended before it even started.
           case ERROR_OPERATION_ABORTED:
@@ -1051,20 +1053,23 @@ public class Win32ProcessLauncher {
             postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
             return true;
           case ERROR_PROC_NOT_FOUND:
-            break attempt;
+            postOpMessage(process_info, current_state);
+            return true;
           case ERROR_SUCCESS:
-            break attempt;
+            postOpMessage(process_info, current_state);
+            return true;
           case ERROR_INVALID_HANDLE:
             throw new IllegalStateException("Invalid handle when connecting to a pipe");
           default:
             System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (connect():" + err + ")\n");
-            break attempt;
+            postOpMessage(process_info, current_state);
+            return true;
         }
       } else {
-        postOpMessage(process_info, op);
+        postOpMessage(process_info, next_state);
+        return true;
       }
     }
-    return false;
   }
 
   private static void read(final ProcessInformation process_info, final HANDLE pipe, final int op) {
@@ -1114,10 +1119,14 @@ public class Win32ProcessLauncher {
           case ERROR_NOT_ENOUGH_MEMORY:
           case ERROR_PROC_NOT_FOUND:
           case ERROR_SUCCESS:
-            break attempt;
+            postOpMessage(process_info, op);
+            return true;
+            //break attempt;
           default:
             System.err.println("\n************** PID: " + process_info.pid + " ERROR: UNKNOWN (read():" + err + ")\n");
-            break attempt;
+            postOpMessage(process_info, op);
+            return true;
+            //break attempt;
         }
       }
     }
@@ -1131,7 +1140,7 @@ public class Win32ProcessLauncher {
     }
 
     if (nSize == 0) {
-      nSize = 4096;
+      nSize = 1024;
     }
 
     final String pipe_name = "\\\\.\\Pipe\\RemoteExeAnon." + GetCurrentProcessId() + "." + overlapped_pipe_serial_number.incrementAndGet();

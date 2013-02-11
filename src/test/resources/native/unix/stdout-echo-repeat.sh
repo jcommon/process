@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
-value=$1
-repeat=$2
+repeat=$1
+value=$2
 
 x=1
 while [ $x -le $repeat ]
