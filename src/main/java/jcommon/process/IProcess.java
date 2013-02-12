@@ -19,6 +19,8 @@
 
 package jcommon.process;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  */
 public interface IProcess {
@@ -65,4 +67,89 @@ public interface IProcess {
    * @return An array of {@link IProcessListener} instances.
    */
   IProcessListener[] getListeners();
+
+  /**
+   * Returns an integer representing the exit code for the process. This value is only
+   * valid after the process has exited by a call to {@link #await()} or from
+   * {@link IProcessListener#stopped(IProcess, int)} or {@link ProcessListener#processStopped(IProcess, int)}.
+   *
+   * @return An integer representing the process exit code.
+   */
+  int getExitCode();
+
+  /**
+   * Causes the current thread to wait until the process has exited, unless
+   * the thread is {@linkplain Thread#interrupt interrupted}.
+   *
+   * <p>If the process has already exited, then this method returns
+   * immediately.
+   *
+   * <p>If the process is running then the current thread becomes disabled
+   * for thread scheduling purposes and lies dormant until one of two things
+   * happen:
+   * <ul>
+   * <li>The process exits; or
+   * <li>Some other thread {@linkplain Thread#interrupt interrupts}
+   * the current thread.
+   * </ul>
+   *
+   * <p>If the current thread:
+   * <ul>
+   * <li>has its interrupted status set on entry to this method; or
+   * <li>is {@linkplain Thread#interrupt interrupted} while waiting,
+   * </ul>
+   * then {@link InterruptedException} is captured, the current thread's
+   * interrupted status is cleared, and {@code false} is returned.
+   */
+  boolean await();
+
+  /**
+   * Causes the current thread to wait until the process has exited, unless
+   * the thread is {@linkplain Thread#interrupt interrupted}, or the
+   * specified waiting time elapses.
+   *
+   * <p>If the process has already exited then this method returns immediately
+   * with the value {@code true}.
+   *
+   * <p>If the process is running then the current thread becomes disabled for
+   * thread scheduling purposes and lies dormant until one of three things happen:
+   * <ul>
+   * <li>The process exits; or
+   * <li>Some other thread {@linkplain Thread#interrupt interrupts}
+   * the current thread; or
+   * <li>The specified waiting time elapses.
+   * </ul>
+   *
+   * <p>If the process exits then the method returns with the
+   * value {@code true}.
+   *
+   * <p>If the current thread:
+   * <ul>
+   * <li>has its interrupted status set on entry to this method; or
+   * <li>is {@linkplain Thread#interrupt interrupted} while waiting,
+   * </ul>
+   * then {@link InterruptedException} is captured, the current thread's
+   * interrupted status is cleared, and {@code false} is returned.
+   *
+   * <p>If the specified waiting time elapses then the value {@code false}
+   * is returned.  If the time is less than or equal to zero, the method
+   * will not wait at all.
+   *
+   * @param timeout the maximum time to wait
+   * @param unit the time unit of the {@code timeout} argument
+   * @return {@code true} if the count reached zero and {@code false}
+   *         if the waiting time elapsed before the count reached zero
+   *         or an {@link InterruptedException} was thrown.
+   */
+  boolean await(long timeout, TimeUnit unit);
+
+  /**
+   * @see #await()
+   */
+  boolean waitFor();
+
+  /**
+   * @see #await(long, java.util.concurrent.TimeUnit)
+   */
+  boolean waitFor(long timeout, TimeUnit unit);
 }

@@ -450,8 +450,7 @@ public class ProcessBuilder implements Cloneable {
       throw new IllegalStateException("executable must be set before launching a child process");
     }
 
-    impl.launch(inherit_parent_environment, getEnvironmentVariables(), getCommandLine(), getListeners());
-    return null;
+    return impl.launch(inherit_parent_environment, getEnvironmentVariables(), getCommandLine(), getListeners());
   }
 
   private static class EnvironmentVariable implements IEnvironmentVariable {

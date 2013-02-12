@@ -307,6 +307,7 @@ public class Kernel32 implements Win32Library {
   public static native boolean CreatePipe(HANDLEByReference hReadPipe, HANDLEByReference hWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
   public static HANDLE CreateNamedPipe(String lpName, int dwOpenMode, int dwPipeMode, int nMaxInstances, int nOutBufferSize, int nInBufferSize, int nDefaultTimeOut, SECURITY_ATTRIBUTES lpSecurityAttributes) { return CharEncodingSpecific.CreateNamedPipe(lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes); }
   public static native boolean ConnectNamedPipe(HANDLE hNamedPipe, OVERLAPPED lpOverlapped);
+  public static native boolean DisconnectNamedPipe(HANDLE hNamedPipe);
 
   public static native boolean SetHandleInformation(HANDLE hObject, int dwMask, int dwFlags);
 

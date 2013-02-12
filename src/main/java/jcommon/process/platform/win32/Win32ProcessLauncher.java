@@ -37,8 +37,10 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -105,6 +107,8 @@ public class Win32ProcessLauncher {
     final IProcessListener[] listeners;
     final boolean inherit_parent_environment;
     final IEnvironmentVariable[] environment_variables;
+    final CountDownLatch exit_latch = new CountDownLatch(1);
+    final AtomicInteger exit_value = new AtomicInteger(0);
 
     public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
       this.pid = pid;
@@ -158,6 +162,44 @@ public class Win32ProcessLauncher {
     @Override
     public IProcessListener[] getListeners() {
       return listeners;
+    }
+
+    @Override
+    public int getExitCode() {
+      return exit_value.get();
+    }
+
+    @Override
+    public boolean await() {
+      try {
+        exit_latch.await();
+        return true;
+      } catch(InterruptedException ignored) {
+        return false;
+      } catch(Throwable t) {
+        return false;
+      }
+    }
+
+    @Override
+    public boolean await(long timeout, TimeUnit unit) {
+      try {
+        return exit_latch.await(timeout, unit);
+      } catch(InterruptedException ignored) {
+        return false;
+      } catch(Throwable t) {
+        return false;
+      }
+    }
+
+    @Override
+    public boolean waitFor() {
+      return await();
+    }
+
+    @Override
+    public boolean waitFor(long timeout, TimeUnit unit) {
+      return await(timeout, unit);
     }
 
     public void notifyStarted() {
@@ -670,9 +712,13 @@ public class Win32ProcessLauncher {
 
           CloseHandle(process_info.process);
 
+          process_info.exit_value.set(exit_code.getValue());
+
           process_info.notifyStopped(exit_code.getValue());
 
           closeProcess(process_info);
+
+          process_info.exit_latch.countDown();
           break;
         default:
           System.err.println("\n************** PID: " + process_info.pid + " UNKNOWN OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + "\n");
@@ -943,7 +989,7 @@ public class Win32ProcessLauncher {
     //interested parties that the process has been created, etc. Once that's done,
     //we can start read operations.
     try {
-      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED), Pointer.NULL /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
+      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED | CREATE_NO_WINDOW), Pointer.NULL /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
       if (!success) {
         throw new IllegalStateException("Unable to create a process with the following command line: " + command_line);
       }
