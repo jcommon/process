@@ -212,7 +212,8 @@ public class Kernel32 implements Win32Library {
     , ERROR_NOT_ENOUGH_MEMORY   = 0x8
     , ERROR_ACCESS_DENIED       = 5
     , ERROR_INVALID_HANDLE      = 6
-    , ERROR_HANDLE_EOF          = 38;
+    , ERROR_HANDLE_EOF          = 38
+    , ERROR_INVALID_PARAMETER   = 87
   ;
 
   @SuppressWarnings("unused")
@@ -229,6 +230,7 @@ public class Kernel32 implements Win32Library {
   public static final int
       STATUS_WAIT_0             = 0x00000000
     , STATUS_ABANDONED_WAIT_0   = 0x00000080
+    , STATUS_PENDING            = 0x00000103
   ;
 
   @SuppressWarnings("unused")
@@ -246,7 +248,9 @@ public class Kernel32 implements Win32Library {
 
   @SuppressWarnings("unused")
   public static final DWORD
-      STD_OUTPUT_HANDLE = new DWORD(-11)
+      STD_INPUT_HANDLE = new DWORD(-10)
+    , STD_OUTPUT_HANDLE = new DWORD(-11)
+    , STD_ERROR_HANDLE = new DWORD(-12)
   ;
 
   /* Define the dwOpenMode values for CreateNamedPipe */
@@ -283,10 +287,33 @@ public class Kernel32 implements Win32Library {
       PIPE_UNLIMITED_INSTANCES = 255
   ;
 
+  @SuppressWarnings("unused")
+  public static final int
+      WT_EXECUTEDEFAULT            = 0x00000000
+    , WT_EXECUTEINIOTHREAD         = 0x00000001
+    , WT_EXECUTEINPERSISTENTTHREAD = 0x00000080
+    , WT_EXECUTEINWAITTHREAD       = 0x00000004
+    , WT_EXECUTELONGFUNCTION       = 0x00000010
+    , WT_EXECUTEONLYONCE           = 0x00000008
+    , WT_TRANSFER_IMPERSONATION    = 0x00000100
+  ;
+
+  public static interface WAITORTIMERCALLBACK extends Callback {
+    void WaitOrTimerCallback(Pointer lpParameter, boolean TimerOrWaitFired);
+  }
+
+  public static interface OVERLAPPED_COMPLETION_ROUTINE extends Callback {
+    void FileIOCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, OVERLAPPED lpOverlapped);
+  }
+
   public static native int GetLastError();
 
   public static native HANDLE GetCurrentProcess();
   public static native int GetCurrentProcessId();
+  public static native boolean TerminateProcess(HANDLE hProcess, int uExitCode);
+
+  public static native boolean RegisterWaitForSingleObject(HANDLEByReference phNewWaitObject, HANDLE hObject, WAITORTIMERCALLBACK Callback, Pointer Context, int dwMilliseconds, int dwFlags);
+  public static native boolean UnregisterWait(HANDLE WaitHandle);
 
   public static HANDLE CreateUnassociatedIoCompletionPort(int concurrencyValue) { return CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, null, concurrencyValue); }
   public static boolean AssociateHandleWithIoCompletionPort(HANDLE IOComPortHandle, HANDLE Associate, Pointer CompletionKey) { return IOComPortHandle.equals(CreateIoCompletionPort(Associate, IOComPortHandle, CompletionKey, 0)); }
@@ -298,6 +325,7 @@ public class Kernel32 implements Win32Library {
   public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, int /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED /*LPOVERLAPPED*/ lpOverlapped);
   public static native boolean /*BOOL*/   FlushFileBuffers(HANDLE hFile);
   public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, Pointer /*OVERLAPPED*/ lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
+  public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, OVERLAPPED lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
 
 
   public static HANDLE CreateEvent(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, String name) { return CharEncodingSpecific.CreateEvent(security, manual, initial, name); }
@@ -314,8 +342,11 @@ public class Kernel32 implements Win32Library {
   public static HANDLE CreateFile(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile) { return CharEncodingSpecific.CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
   public static native boolean ReadFile(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED lpOverlapped);
   public static native boolean ReadFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED lpOverlapped);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, Pointer lpCompletionRoutine);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, OVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
   public static native boolean WriteFile(HANDLE hFile, byte[] lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean WriteFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
+  public static native boolean CancelIo(HANDLE hFile);
 
   public static native boolean DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, HANDLEByReference lpTargetHandle, int dwDesiredAccess, boolean bInheritHandle, int dwOptions);
   public static native int CloseHandle(HANDLE hObject);

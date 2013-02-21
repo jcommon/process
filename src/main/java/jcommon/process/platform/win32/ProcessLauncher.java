@@ -38,6 +38,7 @@ public final class ProcessLauncher extends Win32PlatformProvider implements IPro
 
   @Override
   public IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
-    return Win32ProcessLauncher.launch(inherit_parent_environment, environment_variables, command_line, listeners);
+    //return Win32ProcessLauncherIOCP.launch(inherit_parent_environment, environment_variables, command_line, listeners);
+    return Win32ProcessLauncherOverlapped.launch(inherit_parent_environment, environment_variables, command_line, listeners);
   }
 }

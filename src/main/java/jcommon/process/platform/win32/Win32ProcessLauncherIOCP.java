@@ -26,32 +26,24 @@ import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.MemoryPool;
-import jcommon.process.api.ObjectPool;
+import jcommon.process.api.PinnableCallback;
 import jcommon.process.api.PinnableMemory;
 import jcommon.process.api.PinnableStruct;
-import jcommon.process.platform.IProcessLauncher;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static jcommon.process.api.JNAUtils.fromSeq;
 import static jcommon.process.api.win32.Kernel32.*;
 import static jcommon.process.api.win32.Win32.*;
-import static jcommon.process.api.win32.Win32.INVALID_HANDLE_VALUE;
+import static jcommon.process.platform.win32.Utils.CreateOverlappedPipe;
+import static jcommon.process.platform.win32.Utils.formulateSanitizedCommandLine;
 
 @SuppressWarnings("unused")
-public class Win32ProcessLauncher {
-  private static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null, null, true, null, null, null);
+public class Win32ProcessLauncherIOCP {
+
 
   private static MemoryPool memory_pool = null;
   private static OverlappedPool overlapped_pool = null;
@@ -59,7 +51,6 @@ public class Win32ProcessLauncher {
   private static HANDLE io_completion_port = INVALID_HANDLE_VALUE;
 
   private static final Object io_completion_port_lock = new Object();
-  private static final AtomicInteger overlapped_pipe_serial_number = new AtomicInteger(0);
   private static final AtomicInteger running_process_count = new AtomicInteger(0);
   private static final AtomicInteger running_io_completion_port_thread_count = new AtomicInteger(0);
   private static final ThreadGroup io_completion_port_thread_group = new ThreadGroup("external processes");
@@ -87,206 +78,6 @@ public class Win32ProcessLauncher {
     public void stop() {
       please_stop = true;
       postThreadStop(id);
-    }
-  }
-
-  private static class ProcessInformation implements IProcess {
-    final int pid;
-    final HANDLE process;
-    final HANDLE main_thread;
-    final HANDLE stdout_child_process_read;
-    final HANDLE stderr_child_process_read;
-    final HANDLE stdin_child_process_write;
-
-    final AtomicBoolean starting = new AtomicBoolean(true);
-    final AtomicBoolean closing = new AtomicBoolean(false);
-    final Object lock = new Object();
-    final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
-
-    final String[] command_line;
-    final IProcessListener[] listeners;
-    final boolean inherit_parent_environment;
-    final IEnvironmentVariable[] environment_variables;
-    final CountDownLatch exit_latch = new CountDownLatch(1);
-    final AtomicInteger exit_value = new AtomicInteger(0);
-
-    public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
-      this.pid = pid;
-      this.process = process;
-      this.main_thread = main_thread;
-      this.stdout_child_process_read = stdout_child_process_read;
-      this.stderr_child_process_read = stderr_child_process_read;
-      this.stdin_child_process_write = stdin_child_process_write;
-
-      this.command_line = command_line;
-      this.listeners = listeners;
-      this.inherit_parent_environment = inherit_parent_environment;
-      this.environment_variables = environment_variables;
-    }
-
-    /**
-     * @see IProcess#isParentEnvironmentInherited()
-     */
-    @Override
-    public boolean isParentEnvironmentInherited() {
-      return inherit_parent_environment;
-    }
-
-    /**
-     * @see IProcess#getPID()
-     */
-    @Override
-    public int getPID() {
-      return pid;
-    }
-
-    /**
-     * @see IProcess#getCommandLine()
-     */
-    @Override
-    public String[] getCommandLine() {
-      return command_line;
-    }
-
-    /**
-     * @see IProcess#getEnvironmentVariables()
-     */
-    @Override
-    public IEnvironmentVariable[] getEnvironmentVariables() {
-      return environment_variables;
-    }
-
-    /**
-     * @see IProcess#getListeners()
-     */
-    @Override
-    public IProcessListener[] getListeners() {
-      return listeners;
-    }
-
-    @Override
-    public int getExitCode() {
-      return exit_value.get();
-    }
-
-    @Override
-    public boolean await() {
-      try {
-        exit_latch.await();
-        return true;
-      } catch(InterruptedException ignored) {
-        return false;
-      } catch(Throwable t) {
-        return false;
-      }
-    }
-
-    @Override
-    public boolean await(long timeout, TimeUnit unit) {
-      try {
-        return exit_latch.await(timeout, unit);
-      } catch(InterruptedException ignored) {
-        return false;
-      } catch(Throwable t) {
-        return false;
-      }
-    }
-
-    @Override
-    public boolean waitFor() {
-      return await();
-    }
-
-    @Override
-    public boolean waitFor(long timeout, TimeUnit unit) {
-      return await(timeout, unit);
-    }
-
-    public void notifyStarted() {
-      try {
-        for(IProcessListener listener : listeners) {
-          listener.started(this);
-        }
-      } catch(Throwable t) {
-        notifyError(t);
-      }
-    }
-
-    public void notifyStopped(final int exit_code) {
-      try {
-        for(IProcessListener listener : listeners) {
-          listener.stopped(this, exit_code);
-        }
-      } catch(Throwable t) {
-        notifyError(t);
-      }
-    }
-
-    public void notifyStdOut(final ByteBuffer buffer, final int bufferSize) {
-      try {
-        for(IProcessListener listener : listeners) {
-          listener.stdout(this, buffer, bufferSize);
-        }
-      } catch(Throwable t) {
-        notifyError(t);
-      }
-    }
-
-    public void notifyStdErr(final ByteBuffer buffer, final int bufferSize) {
-      try {
-        for(IProcessListener listener : listeners) {
-          listener.stderr(this, buffer, bufferSize);
-        }
-      } catch(Throwable t) {
-        notifyError(t);
-      }
-    }
-
-    public void notifyError(final Throwable t) {
-      for(IProcessListener listener : listeners) {
-        listener.error(this, t);
-      }
-    }
-
-    public void incrementOps(int op) {
-      synchronized (lock) {
-        outstanding_ops.push(op);
-      }
-    }
-
-    public void decrementOps(int op) {
-      synchronized (lock) {
-        outstanding_ops.removeFirstOccurrence(op);
-      }
-    }
-
-    public void replaceOp(int op, int with) {
-      synchronized (lock) {
-        outstanding_ops.removeFirstOccurrence(op);
-        outstanding_ops.push(with);
-      }
-    }
-
-    public Integer[] outstandingOps() {
-      synchronized (lock) {
-        return outstanding_ops.toArray(new Integer[outstanding_ops.size()]);
-      }
-    }
-
-    public List<String> outstandingOpsAsString() {
-      synchronized (lock) {
-        final LinkedList<String> ret = new LinkedList<String>();
-        for(Integer op : outstanding_ops) {
-          ret.push(OVERLAPPEDEX.nameForOp(op));
-        }
-        return ret;
-      }
-    }
-
-    public boolean anyOutstandingOps() {
-      synchronized (lock) {
-        return outstanding_ops.isEmpty();
-      }
     }
   }
 
@@ -320,7 +111,7 @@ public class Win32ProcessLauncher {
 
               //Block waiting for instances to be placed in the queue.
               //See closeProcess().
-              while((process_info = process_dispose_queue.take()) != PROCESS_INFORMATION_STOP_SENTINEL) {
+              while((process_info = process_dispose_queue.take()) != ProcessInformation.PROCESS_INFORMATION_STOP_SENTINEL) {
                 releaseProcess(process_info);
               }
 
@@ -380,18 +171,17 @@ public class Win32ProcessLauncher {
         processes.put(process_info.process, process_info);
         return true;
       } else {
-        releaseProcess(process_info);
         return false;
       }
     }
   }
 
   private static void closeProcess(final ProcessInformation info) {
-    try {
-      //Ship the instance over to be processed by the reaper.
-      process_dispose_queue.put(info);
-    } catch(InterruptedException ignored) {
-    }
+//    try {
+//      //Ship the instance over to be processed by the reaper.
+//      process_dispose_queue.put(info);
+//    } catch(InterruptedException ignored) {
+//    }
   }
 
   private static void releaseProcess(final ProcessInformation info) {
@@ -409,7 +199,7 @@ public class Win32ProcessLauncher {
         try { io_completion_port_thread_pool_barrier_stop.await(); } catch(Throwable t) { }
 
         //Ask the reaper to stop.
-        try { process_dispose_queue.put(PROCESS_INFORMATION_STOP_SENTINEL); } catch (Throwable t) { }
+        try { process_dispose_queue.put(ProcessInformation.PROCESS_INFORMATION_STOP_SENTINEL); } catch (Throwable t) { }
 
         //Closing this could result in an ERROR_ABANDONED_WAIT_0 on threads' GetQueuedCompletionStatus() call.
         CloseHandle(io_completion_port);
@@ -469,25 +259,27 @@ public class Win32ProcessLauncher {
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
             return;
-          case ERROR_BROKEN_PIPE:
-            //Other end of pipe has closed. So all outstanding operations at this point must close.
-            //Send a message out indicating that it's time to close.
-
-            process.reuse(Pointer.createConstant(pCompletionKey.getValue()));
-            process_info = processes.get(process);
-
-            overlapped.reuse(ppOverlapped.getValue());
-            PinnableMemory.unpin(overlapped.buffer);
-            PinnableStruct.unpin(overlapped);
-
-            if (process_info != null) {
-              postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
-            }
-            continue;
-          case ERROR_INVALID_HANDLE:
-            continue;
-          default:
-            continue;
+//          case ERROR_BROKEN_PIPE:
+//            //Other end of pipe has closed. So all outstanding operations at this point must close.
+//            //Send a message out indicating that it's time to close.
+//
+//            process.reuse(Pointer.createConstant(pCompletionKey.getValue()));
+//            process_info = processes.get(process);
+//
+//            overlapped.reuse(ppOverlapped.getValue());
+//
+//            if (process_info != null) {
+//              process_info.decrementOps(overlapped.op);
+//              postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+//            }
+//
+//            PinnableMemory.unpin(overlapped.buffer);
+//            PinnableStruct.unpin(overlapped);
+//            continue;
+//          case ERROR_INVALID_HANDLE:
+//            continue;
+//          default:
+//            continue;
         }
       }
 
@@ -524,10 +316,13 @@ public class Win32ProcessLauncher {
         continue;
       }
 
+      process_info.decrementOps(overlapped.op);
+
       //When we start up, we follow this chain of events:
       //  CreateProcess() -> OP_INITIATE_CONNECT -> OP_STDOUT_CONNECT -> OP_STDERR_CONNECT -> OP_CONNECTED -> OP_STDOUT_READ, OP_STDERR_READ
 
       //System.err.println("PID: " + process_info.pid + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op));
+      //System.err.println("PID " + process_info.getPID() + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + " " + process_info.outstandingOpsAsString());
 
       switch(overlapped.op) {
         case OVERLAPPEDEX.OP_INITIATE_CONNECT:
@@ -561,22 +356,24 @@ public class Win32ProcessLauncher {
           bytes_transferred = Math.max(0, Math.min(pBytesTransferred.getValue(), overlapped.bufferSize));
 
           if (!GetOverlappedResult(process_info.stdout_child_process_read, pOverlapped, pBytesTransferred, false)) {
-            err = GetLastError();
-
-            PinnableStruct.unpin(overlapped);
-            PinnableMemory.unpin(overlapped.buffer);
-
-            switch(err) {
-              case ERROR_HANDLE_EOF:
-              case ERROR_BROKEN_PIPE:
-                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
-                continue;
-              case ERROR_INVALID_HANDLE:
-                continue;
-              default:
-                continue;
-            }
+//            err = GetLastError();
+//
+//            PinnableStruct.unpin(overlapped);
+//            PinnableMemory.unpin(overlapped.buffer);
+//
+//            switch(err) {
+//              case ERROR_HANDLE_EOF:
+//              case ERROR_BROKEN_PIPE:
+//                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+//                continue;
+//              case ERROR_INVALID_HANDLE:
+//                continue;
+//              default:
+//                continue;
+//            }
           }
+
+//          System.out.println("BYTES LEFT: " + bytes_transferred + "/" + pBytesTransferred.getValue());
 
           if (bytes_transferred > 0) {
             process_info.notifyStdOut(overlapped.buffer.getByteBuffer(0, bytes_transferred), bytes_transferred);
@@ -586,7 +383,10 @@ public class Win32ProcessLauncher {
           PinnableMemory.unpin(overlapped.buffer);
 
           //Schedule our next read.
-          read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+
+          if (!process_info.closing.get()) {
+            read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
+          }
           break;
 
         case OVERLAPPEDEX.OP_STDOUT_REQUEST_READ:
@@ -602,21 +402,21 @@ public class Win32ProcessLauncher {
           bytes_transferred = Math.max(0, Math.min(pBytesTransferred.getValue(), overlapped.bufferSize));
 
           if (!GetOverlappedResult(process_info.stderr_child_process_read, pOverlapped, pBytesTransferred, false)) {
-            err = GetLastError();
-
-            PinnableStruct.unpin(overlapped);
-            PinnableMemory.unpin(overlapped.buffer);
-
-            switch(err) {
-              case ERROR_HANDLE_EOF:
-              case ERROR_BROKEN_PIPE:
-                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
-                continue;
-              case ERROR_INVALID_HANDLE:
-                continue;
-              default:
-                continue;
-            }
+//            err = GetLastError();
+//
+//            PinnableStruct.unpin(overlapped);
+//            PinnableMemory.unpin(overlapped.buffer);
+//
+//            switch(err) {
+//              case ERROR_HANDLE_EOF:
+//              case ERROR_BROKEN_PIPE:
+//                postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+//                continue;
+//              case ERROR_INVALID_HANDLE:
+//                continue;
+//              default:
+//                continue;
+//            }
           }
 
           if (bytes_transferred > 0) {
@@ -627,7 +427,9 @@ public class Win32ProcessLauncher {
           PinnableMemory.unpin(overlapped.buffer);
 
           //Schedule our next read.
-          read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          if (!process_info.closing.get()) {
+            read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
+          }
           break;
 
         case OVERLAPPEDEX.OP_STDERR_REQUEST_READ:
@@ -674,6 +476,8 @@ public class Win32ProcessLauncher {
           //process_info.closing and would not be allowed to post this message if it has
           //already done so.
 
+          UnregisterWait(process_info.process_exit_wait);
+
           postOpMessage(process_info, OVERLAPPEDEX.OP_STDIN_CLOSE);
           break;
 
@@ -705,6 +509,8 @@ public class Win32ProcessLauncher {
           PinnableMemory.unpin(overlapped.buffer);
           PinnableStruct.unpin(overlapped);
 
+          //By the time we get here, the process should have already exited.
+          //But just in case it hasn't, we'll wait around for it.
           WaitForSingleObject(process_info.process, INFINITE);
 
           final IntByReference exit_code = new IntByReference();
@@ -716,164 +522,20 @@ public class Win32ProcessLauncher {
 
           process_info.notifyStopped(exit_code.getValue());
 
-          closeProcess(process_info);
+          //closeProcess(process_info);
+          releaseProcess(process_info);
 
           process_info.exit_latch.countDown();
           break;
         default:
-          System.err.println("\n************** PID: " + process_info.pid + " UNKNOWN OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + "\n");
+          //System.err.println("\n************** PID: " + process_info.pid + " UNKNOWN OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + "\n");
           break;
       }
-    }
-  }
-
-  private static int indexOfAny(final String value, final String lookingFor) {
-    for(int i = 0; i < lookingFor.length(); ++i) {
-      int index = lookingFor.indexOf(lookingFor.charAt(i));
-      if (index >= 0)
-        return index;
-    }
-    return -1;
-  }
-
-  private static void fill(final StringBuilder sb, final char c, final int times) {
-    if (times < 0)
-      return;
-
-    for(int i = 0; i < times; ++i) {
-      sb.append(c);
-    }
-  }
-
-  /**
-   * Attempt to discover if an executable is cmd.exe or not. If it
-   * is, then we'll need to (later on) specially encode its parameters.
-   */
-  private static boolean isCmdExe(final String executable) {
-    return (
-         "\"cmd.exe\"".equalsIgnoreCase(executable)
-      || "\"cmd\"".equalsIgnoreCase(executable)
-      || "cmd.exe".equalsIgnoreCase(executable)
-      || "cmd".equalsIgnoreCase(executable)
-    );
-  }
-
-  /**
-   * When parsing the command line for cmd.exe, special care must be taken
-   * to escape certain meta characters to avoid malicious attempts to inject
-   * commands.
-   *
-   * All meta characters will have a '^' placed in front of them which instructs
-   * cmd.exe to interpret the next character literally.
-   */
-  private static boolean isCmdExeMetaCharacter(final char c) {
-    return (
-         c == '('
-      || c == ')'
-      || c == '%'
-      || c == '!'
-      || c == '^'
-      || c == '\"'
-      || c == '<'
-      || c == '>'
-      || c == '&'
-      || c == '|'
-    );
-  }
-
-  /**
-   * Encodes a string for proper interpretation by CreateProcess().
-   *
-   * @see <a href="http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx">http://blogs.msdn.com/b/twistylittlepassagesallalike/archive/2011/04/23/everyone-quotes-arguments-the-wrong-way.aspx</a>
-   */
-  private static String encode(final boolean is_cmd_exe, final String arg) {
-    if (!"".equals(arg) && indexOfAny(arg, " \t\n\11\"") < 0) {
-      return arg;
-    } else {
-      final int len = arg.length();
-      final StringBuilder sb = new StringBuilder(len);
-
-      if (is_cmd_exe) {
-        sb.append('^');
-      }
-
-      sb.append('\"');
-
-      char c;
-      int number_backslashes;
-
-      for(int i = 0; i < len; ++i) {
-        number_backslashes = 0;
-
-        while(i < len && '\\' == arg.charAt(i)) {
-          ++i;
-          ++number_backslashes;
-        }
-
-        c = arg.charAt(i);
-
-        if (i == len) {
-          //Escape all backslashes, but let the terminating
-          //double quotation mark we add below be interpreted
-          //as a metacharacter.
-          fill(sb, '\\', number_backslashes * 2);
-          break;
-        } else if (c == '\"') {
-          //Escape all backslashes and the following
-          //double quotation mark.
-          fill(sb, '\\', number_backslashes * 2 + 1);
-          if (is_cmd_exe) {
-            sb.append('^');
-          }
-          sb.append(c);
-        } else {
-          //Backslashes aren't special here.
-          fill(sb, '\\', number_backslashes);
-          if (is_cmd_exe && isCmdExeMetaCharacter(c)) {
-            sb.append('^');
-          }
-          sb.append(c);
-        }
-      }
-
-      if (is_cmd_exe) {
-        sb.append('^');
-      }
-
-      sb.append('\"');
-      return sb.toString();
     }
   }
 
   public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
-    if (args == null || args.length <= 1 || "".equals(args[0])) {
-      throw new IllegalArgumentException("args cannot be null or empty and provide at least the executable as the first argument.");
-    }
-
-    if (args[0].length() > MAX_PATH) {
-      throw new IllegalArgumentException("The application path cannot exceed " + MAX_PATH + " characters.");
-    }
-
-    int size = 0;
-    for(int i = 0; i < args.length; ++i) {
-      size += args[i].length();
-    }
-
-    final StringBuilder sb = new StringBuilder(size + (args.length * 3 /* Space and beginning and ending quotes */));
-    final String executable = encode(false, args[0].trim());
-    final boolean is_cmd_exe = isCmdExe(executable);
-
-    sb.append(executable);
-    for(int i = 1; i < args.length; ++i) {
-      //Separate each argument with a space.
-      sb.append(' ');
-      sb.append(encode(!is_cmd_exe ? false : args[i].startsWith("/") ? false : true, args[i]));
-    }
-
-    //Validate total length of the arguments.
-    if (sb.length() > MAX_COMMAND_LINE_SIZE) {
-      throw new IllegalArgumentException("The complete command line cannot exceed " + MAX_COMMAND_LINE_SIZE + " characters.");
-    }
+    final String command_line = formulateSanitizedCommandLine(args);
 
     //Setup pipes for stdout/stderr/stdin redirection.
     //Set the bInheritHandle flag so pipe handles are inherited.
@@ -953,7 +615,6 @@ public class Win32ProcessLauncher {
       throw new IllegalStateException("Unable to ensure the pipe's stdin write handle is not inherited.");
     }
 
-    final String command_line = sb.toString();
     final STARTUPINFO startup_info = new STARTUPINFO();
     final PROCESS_INFORMATION.ByReference proc_info = new PROCESS_INFORMATION.ByReference();
 
@@ -974,6 +635,7 @@ public class Win32ProcessLauncher {
     startup_info.hStdInput        = stdin_child_process_read;
     startup_info.hStdOutput       = stdout_child_process_write;
     startup_info.hStdError        = stderr_child_process_write;
+//    startup_info.hStdInput        = GetStdHandle(STD_INPUT_HANDLE);
 
     if (!initializeIOCompletionPort()) {
       CloseHandle(stdout_child_process_read);
@@ -1003,8 +665,6 @@ public class Win32ProcessLauncher {
       throw new IllegalStateException("Unable to create a process with the following command line: " + command_line, t);
     }
 
-    final int pid = proc_info.dwProcessId.intValue();
-
     //Close out the child process' stdout write.
     CloseHandle(stdout_child_process_write);
 
@@ -1024,46 +684,90 @@ public class Win32ProcessLauncher {
       stdout_child_process_read,
       stderr_child_process_read,
       stdin_child_process_write,
+//        null,
       inherit_parent_environment,
       environment_variables,
       args,
-      listeners
+      listeners,
+      new ProcessInformation.ICreateProcessExitCallback() {
+        @Override
+        public HANDLE createExitCallback(final ProcessInformation process_info) {
+          final HANDLEByReference ptr_process_exit_wait = new HANDLEByReference();
+
+          //Receive notification when the process exits.
+          RegisterWaitForSingleObject(
+              ptr_process_exit_wait,
+              proc_info.hProcess,
+              PinnableCallback.pin(new WAITORTIMERCALLBACK() {
+                @Override
+                public void WaitOrTimerCallback(Pointer lpParameter, boolean TimerOrWaitFired) {
+                  PinnableCallback.unpin(this);
+
+                  //Post a message to the iocp letting it know that the child has exited.
+                  postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                }
+              }),
+              null,
+              INFINITE,
+              WT_EXECUTEDEFAULT | WT_EXECUTEONLYONCE
+          );
+
+          return ptr_process_exit_wait.getValue();
+        }
+      }
     );
 
     if (!initializeProcess(process_info)) {
-      //We don't need to close stdout_child_process_read, stderr_child_process_read, etc.
-      //b/c those are closed in releaseProcess(), called from initializeProcess(), if it
-      //was unable to initialize properly.
-      //Since other handles have already been closed before the call to initializeProcess(),
-      //there's nothing to do -- no need to close anything else out.
+      //Ensure we don't get the callback.
+      UnregisterWait(process_info.process_exit_wait);
+
+      //Kill the process forcefully.
+      TerminateProcess(process_info.process, 0);
+
+      //Close remaining open handles.
+      CloseHandle(process_info.stdin_child_process_write);
+      CloseHandle(process_info.stderr_child_process_read);
+      CloseHandle(process_info.stdout_child_process_read);
+      CloseHandle(process_info.process);
+
+      //Tear down our I/O completion port if necessary.
+      releaseProcess(process_info);
+
+      //Not necessary -- we didn't really launch the process.
+      ////Let waiting callers know we're done.
+      //process_info.exit_latch.countDown();
+
       throw new IllegalStateException("Unable to initialize new process");
     }
 
     //Initiate the connection process.
     postOpMessage(process_info, OVERLAPPEDEX.OP_INITIATE_CONNECT);
 
-    ////Begin reading asynchronously.
-    //read(process_info, process_info.stdout_child_process_read, OVERLAPPEDEX.OP_STDOUT_READ);
-    //read(process_info, process_info.stderr_child_process_read, OVERLAPPEDEX.OP_STDERR_READ);
-
-    //WaitForSingleObject(proc_info.hProcess, INFINITE);
-
     return process_info;
   }
 
   private static void postOpMessage(final ProcessInformation process_info, final int op) {
+    process_info.incrementOps(op);
     PostQueuedCompletionStatus(io_completion_port, 0, process_info.process.getPointer(), overlapped_pool.requestInstance(op));
   }
 
+  private static boolean hasOverlappedIoCompleted(final OVERLAPPEDEX o) {
+    return o.Internal.intValue() != STATUS_PENDING;
+  }
+
   private static void connect(final ProcessInformation process_info, final HANDLE pipe, final int current_state, final int next_state) {
-    for(;;) {
+    //for(;;) {
       if (connect_attempt(process_info, pipe, current_state, next_state)) {
         return;
       }
-    }
+    //}
   }
 
   private static boolean connect_attempt(final ProcessInformation process_info, final HANDLE pipe, final int current_state, final int next_state) {
+    if (process_info.outstanding_ops.contains(OVERLAPPEDEX.OP_INITIATE_CONNECT)) {
+      System.err.println("DOH");
+    }
+
     attempt: {
       //final OVERLAPPEDEX o = overlapped_pool.requestInstance(op);
 
@@ -1119,14 +823,15 @@ public class Win32ProcessLauncher {
   }
 
   private static void read(final ProcessInformation process_info, final HANDLE pipe, final int op) {
-    for(;;) {
+    //for(;;) {
       if (read_attempt(process_info, pipe, op)) {
         return;
       }
-    }
+    //}
   }
 
   private static boolean read_attempt(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+    process_info.incrementOps(op);
     attempt: {
       final OVERLAPPEDEX o = overlapped_pool.requestInstance(
         op,
@@ -1161,6 +866,7 @@ public class Win32ProcessLauncher {
           case ERROR_ACCESS_DENIED:
           case ERROR_INVALID_HANDLE:
             return true;
+          case ERROR_NO_DATA:
           case ERROR_INVALID_USER_BUFFER:
           case ERROR_NOT_ENOUGH_MEMORY:
           case ERROR_PROC_NOT_FOUND:
@@ -1177,187 +883,5 @@ public class Win32ProcessLauncher {
       }
     }
     return false;
-  }
-
-  @SuppressWarnings("all")
-  public static boolean CreateOverlappedPipe(HANDLEByReference lpReadPipe, HANDLEByReference lpWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize, int dwReadMode, int dwWriteMode) {
-    if (((dwReadMode | dwWriteMode) & (~FILE_FLAG_OVERLAPPED)) != 0) {
-      throw new IllegalArgumentException("This method is to be used for overlapped IO only.");
-    }
-
-    if (nSize == 0) {
-      nSize = 1024;
-    }
-
-    final String pipe_name = "\\\\.\\Pipe\\RemoteExeAnon." + GetCurrentProcessId() + "." + overlapped_pipe_serial_number.incrementAndGet();
-
-    final HANDLE ReadPipeHandle = CreateNamedPipe(pipe_name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED | dwReadMode, PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_READMODE_BYTE, 1, nSize, nSize, 0, lpPipeAttributes);
-    if (ReadPipeHandle == INVALID_HANDLE_VALUE) {
-      return false;
-    }
-
-    final HANDLE WritePipeHandle = CreateFile(pipe_name, GENERIC_WRITE, 0, lpPipeAttributes, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | dwWriteMode, null);
-    if (WritePipeHandle == INVALID_HANDLE_VALUE) {
-      CloseHandle(ReadPipeHandle);
-      return false;
-    }
-
-    lpReadPipe.setValue(ReadPipeHandle);
-    lpWritePipe.setValue(WritePipeHandle);
-
-    return true;
-  }
-
-  public static class OVERLAPPEDEX extends OVERLAPPED {
-    public OVERLAPPED ovl;
-    public Pointer buffer;
-    public int bufferSize;
-    public int op;
-
-    private static final List FIELD_ORDER = fromSeq(
-        "Internal"
-      , "InternalHigh"
-      , "Offset"
-      , "OffsetHigh"
-      , "hEvent"
-      , "ovl"
-      , "buffer"
-      , "bufferSize"
-      , "op"
-    );
-
-    @Override
-    protected List getFieldOrder() {
-      return FIELD_ORDER;
-    }
-
-    public void reuse(Pointer memory) {
-      useMemory(memory);
-      read();
-    }
-
-    public static String nameForOp(int op) {
-      switch(op) {
-        case OP_INITIATE_CONNECT:
-          return "OP_INITIATE_CONNECT";
-
-        case OP_STDOUT_CONNECT:
-          return "OP_STDOUT_CONNECT";
-        case OP_STDOUT_READ:
-          return "OP_STDOUT_READ";
-        case OP_STDOUT_REQUEST_READ:
-          return "OP_STDOUT_REQUEST_READ";
-        case OP_STDOUT_CLOSE:
-          return "OP_STDOUT_CLOSE";
-
-        case OP_STDERR_CONNECT:
-          return "OP_STDERR_CONNECT";
-        case OP_STDERR_READ:
-          return "OP_STDERR_READ";
-        case OP_STDERR_REQUEST_READ:
-          return "OP_STDERR_REQUEST_READ";
-        case OP_STDERR_CLOSE:
-          return "OP_STDERR_CLOSE";
-
-        case OP_STDIN_CONNECT:
-          return "OP_STDIN_CONNECT";
-        case OP_STDIN_WRITE:
-          return "OP_STDIN_WRITE";
-        case OP_STDIN_REQUEST_WRITE:
-          return "OP_STDIN_REQUEST_WRITE";
-        case OP_STDIN_CLOSE:
-          return "OP_STDIN_CLOSE";
-
-        case OP_PARENT_DISCONNECT:
-          return "OP_PARENT_DISCONNECT";
-        case OP_CHILD_DISCONNECT:
-          return "OP_CHILD_DISCONNECT";
-
-        case OP_CONNECTED:
-          return "OP_CONNECTED";
-        case OP_INITIATE_CLOSE:
-          return "OP_INITIATE_CLOSE";
-        case OP_CLOSED:
-          return "OP_CLOSED";
-        case OP_EXITTHREAD:
-          return "OP_EXITTHREAD";
-
-        default:
-          return "<UNKNOWN:" + op + ">";
-      }
-    }
-
-    public static final int
-        OP_INITIATE_CONNECT    =  0
-      , OP_STDOUT_CONNECT      =  1
-      , OP_STDOUT_READ         =  2
-      , OP_STDOUT_REQUEST_READ =  3
-      , OP_STDOUT_CLOSE        =  4
-
-      , OP_STDERR_CONNECT      =  5
-      , OP_STDERR_READ         =  6
-      , OP_STDERR_REQUEST_READ =  7
-      , OP_STDERR_CLOSE        =  8
-
-      , OP_STDIN_CONNECT       =  9
-      , OP_STDIN_WRITE         = 10
-      , OP_STDIN_REQUEST_WRITE = 11
-      , OP_STDIN_CLOSE         = 12
-
-      , OP_PARENT_DISCONNECT   = 13
-      , OP_CHILD_DISCONNECT    = 14
-
-      , OP_CONNECTED           = 15
-      , OP_INITIATE_CLOSE      = 16
-      , OP_CLOSED              = 17
-      , OP_EXITTHREAD          = 18
-    ;
-  }
-
-  private static class OverlappedPool {
-    private final ObjectPool<OVERLAPPEDEX> pool;
-    private final PinnableStruct.IPinListener<OVERLAPPEDEX> pin_listener;
-
-    public OverlappedPool(int initialPoolSize) {
-      this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPEDEX>() {
-        @Override
-        public boolean unpinned(OVERLAPPEDEX instance) {
-          pool.returnToPool(instance);
-          return false;
-        }
-      };
-
-      this.pool = new ObjectPool<OVERLAPPEDEX>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPEDEX>() {
-        @Override
-        public OVERLAPPEDEX allocateInstance() {
-          return OVERLAPPEDEX.pin(new OVERLAPPEDEX(), pin_listener);
-        }
-
-        @Override
-        public void disposeInstance(OVERLAPPEDEX instance) {
-          OVERLAPPEDEX.dispose(instance);
-        }
-      });
-    }
-
-    public void dispose() {
-      pool.dispose();
-    }
-
-    public OVERLAPPEDEX requestInstance() {
-      return pool.requestInstance();
-    }
-
-    public OVERLAPPEDEX requestInstance(final int operation) {
-      return requestInstance(operation, null, 0);
-    }
-
-    public OVERLAPPEDEX requestInstance(final int operation, final Pointer buffer, final int buffer_size) {
-      final OVERLAPPEDEX instance = requestInstance();
-      instance.op = operation;
-      instance.buffer = buffer;
-      instance.bufferSize = buffer_size;
-      return instance;
-    }
   }
 }
