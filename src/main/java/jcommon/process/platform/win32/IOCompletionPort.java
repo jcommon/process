@@ -59,90 +59,90 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
 
     final Pointer completionKey;
     final TAssociation association;
-    final Object lock = new Object();
-    final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
+//    final Object lock = new Object();
+//    final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
 
     public AssociationInformation(Pointer completionKey, TAssociation association) {
       this.completionKey = completionKey;
       this.association = association;
     }
 
-  public void incrementOps(int op) {
-    synchronized (lock) {
-      outstanding_ops.push(op);
-    }
-  }
-
-  public void decrementOps(int op) {
-    synchronized (lock) {
-      outstanding_ops.removeFirstOccurrence(op);
-    }
-  }
-
-  public void replaceOp(int op, int with) {
-    synchronized (lock) {
-      outstanding_ops.removeFirstOccurrence(op);
-      outstanding_ops.push(with);
-    }
-  }
-
-  public Integer[] outstandingOps() {
-    synchronized (lock) {
-      return outstanding_ops.toArray(new Integer[outstanding_ops.size()]);
-    }
-  }
-
-  public List<String> outstandingOpsAsString() {
-    synchronized (lock) {
-      final LinkedList<String> ret = new LinkedList<String>();
-      for(Integer op : outstanding_ops) {
-        ret.push(OVERLAPPEDEX.nameForOp(op));
-      }
-      return ret;
-    }
-  }
-
-  public boolean anyOutstandingOps() {
-    synchronized (lock) {
-      return !outstanding_ops.isEmpty();
-    }
-  }
-
-  public boolean onlyRemainingOp(final int op) {
-    synchronized (lock) {
-      return (!outstanding_ops.isEmpty() && outstanding_ops.size() == 1 && outstanding_ops.contains(op));
-    }
-  }
-
-  public boolean emptyOrOnlyRemainingOp(final int op) {
-    synchronized (lock) {
-      return (outstanding_ops.isEmpty() || (outstanding_ops.size() == 1 && outstanding_ops.contains(op)));
-    }
-  }
-
-  public boolean emptyOrOnlyRemainingOps(final int...ops) {
-    synchronized (lock) {
-      if (outstanding_ops.isEmpty())
-        return true;
-
-      //Are there any outstanding values that aren't in our list of
-      //provided, valid values?
-      boolean found;
-      for(int outstanding_op : outstanding_ops) {
-        found = false;
-        for(int op : ops) {
-          if (outstanding_op == op) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          return false;
-        }
-      }
-      return true;
-    }
-  }
+//    public void incrementOps(int op) {
+//      synchronized (lock) {
+//        outstanding_ops.push(op);
+//      }
+//    }
+//
+//    public void decrementOps(int op) {
+//      synchronized (lock) {
+//        outstanding_ops.removeFirstOccurrence(op);
+//      }
+//    }
+//
+//    public void replaceOp(int op, int with) {
+//      synchronized (lock) {
+//        outstanding_ops.removeFirstOccurrence(op);
+//        outstanding_ops.push(with);
+//      }
+//    }
+//
+//    public Integer[] outstandingOps() {
+//      synchronized (lock) {
+//        return outstanding_ops.toArray(new Integer[outstanding_ops.size()]);
+//      }
+//    }
+//
+//    public List<String> outstandingOpsAsString() {
+//      synchronized (lock) {
+//        final LinkedList<String> ret = new LinkedList<String>();
+//        for(Integer op : outstanding_ops) {
+//          ret.push(OVERLAPPED_WITH_BUFFER_AND_STATE.nameForState(op));
+//        }
+//        return ret;
+//      }
+//    }
+//
+//    public boolean anyOutstandingOps() {
+//      synchronized (lock) {
+//        return !outstanding_ops.isEmpty();
+//      }
+//    }
+//
+//    public boolean onlyRemainingOp(final int op) {
+//      synchronized (lock) {
+//        return (!outstanding_ops.isEmpty() && outstanding_ops.size() == 1 && outstanding_ops.contains(op));
+//      }
+//    }
+//
+//    public boolean emptyOrOnlyRemainingOp(final int op) {
+//      synchronized (lock) {
+//        return (outstanding_ops.isEmpty() || (outstanding_ops.size() == 1 && outstanding_ops.contains(op)));
+//      }
+//    }
+//
+//    public boolean emptyOrOnlyRemainingOps(final int...ops) {
+//      synchronized (lock) {
+//        if (outstanding_ops.isEmpty())
+//          return true;
+//
+//        //Are there any outstanding values that aren't in our list of
+//        //provided, valid values?
+//        boolean found;
+//        for(int outstanding_op : outstanding_ops) {
+//          found = false;
+//          for(int op : ops) {
+//            if (outstanding_op == op) {
+//              found = true;
+//              break;
+//            }
+//          }
+//          if (!found) {
+//            return false;
+//          }
+//        }
+//        return true;
+//      }
+//    }
   }
 
   private static class IOCompletionPortThreadInformation<TAssociation extends Object> {
@@ -271,7 +271,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   }
 
   private void completion_thread(final HANDLE completion_port, final IOCompletionPortThreadInformation ti) throws Throwable {
-    final OVERLAPPEDEX overlapped = new OVERLAPPEDEX();
+    final OVERLAPPED_WITH_BUFFER_AND_STATE overlapped = new OVERLAPPED_WITH_BUFFER_AND_STATE();
     final IntByReference pBytesTransferred = new IntByReference();
     final PointerByReference ppOverlapped = new PointerByReference();
     final IntByReference pCompletionKey = new IntByReference();
@@ -317,7 +317,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
 //            overlapped.reuse(ppOverlapped.getValue());
 //
 //            if (process_info != null) {
-//              process_info.decrementOps(overlapped.op);
+//              process_info.decrementOps(overlapped.state);
 //              postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
 //            }
 //
@@ -342,7 +342,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
 
       //If we've received a message asking to break out of the thread, then loop back and around
       //and check that our flag has been set. If so, then it's time to go!
-      if (overlapped.op == OVERLAPPEDEX.STATE_EXITTHREAD) {
+      if (overlapped.state == OVERLAPPED_WITH_BUFFER_AND_STATE.STATE_EXITTHREAD) {
         PinnableMemory.unpin(overlapped.buffer);
         PinnableStruct.unpin(overlapped);
 
@@ -368,13 +368,13 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
         continue;
       }
 
-      //association_info.decrementOps(overlapped.op);
+      //association_info.decrementOps(overlapped.state);
 
-      //System.err.println("PID: " + process_info.pid + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op));
-      //System.err.println("PID " + process_info.getPID() + ", OP: " + OVERLAPPEDEX.nameForOp(overlapped.op) + " " + process_info.outstandingOpsAsString());
+      //System.err.println("PID: " + process_info.pid + ", STATE: " + OVERLAPPEDEX.nameForState(overlapped.state));
+      //System.err.println("PID " + process_info.getPID() + ", STATE: " + OVERLAPPEDEX.nameForState(overlapped.state) + " " + process_info.outstandingOpsAsString());
 
       try {
-        processor.process(overlapped.op, overlapped.buffer, overlapped.bufferSize, association_info.association, completionKey, pOverlapped, pBytesTransferred, overlapped_pool, memory_pool, this);
+        processor.process(overlapped.state, overlapped.buffer, overlapped.bufferSize, association_info.association, completionKey, pOverlapped, pBytesTransferred, overlapped_pool, memory_pool, this);
       } catch(Throwable t) {
         t.printStackTrace();
       } finally {
@@ -391,7 +391,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
 
   private void postThreadStop(int thread_id) {
     //Post message to thread asking him to exit.
-    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPEDEX.STATE_EXITTHREAD));
+    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPED_WITH_BUFFER_AND_STATE.STATE_EXITTHREAD));
   }
 
   public void release(final Pointer completionKey) {

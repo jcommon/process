@@ -5,27 +5,27 @@ import jcommon.process.api.ObjectPool;
 import jcommon.process.api.PinnableStruct;
 
 final class OverlappedPool {
-  private final ObjectPool<OVERLAPPEDEX> pool;
-  private final PinnableStruct.IPinListener<OVERLAPPEDEX> pin_listener;
+  private final ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE> pool;
+  private final PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE> pin_listener;
 
   public OverlappedPool(int initialPoolSize) {
-    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPEDEX>() {
+    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
       @Override
-      public boolean unpinned(OVERLAPPEDEX instance) {
+      public boolean unpinned(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
         pool.returnToPool(instance);
         return false;
       }
     };
 
-    this.pool = new ObjectPool<OVERLAPPEDEX>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPEDEX>() {
+    this.pool = new ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
       @Override
-      public OVERLAPPEDEX allocateInstance() {
-        return OVERLAPPEDEX.pin(new OVERLAPPEDEX(), pin_listener);
+      public OVERLAPPED_WITH_BUFFER_AND_STATE allocateInstance() {
+        return OVERLAPPED_WITH_BUFFER_AND_STATE.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE(), pin_listener);
       }
 
       @Override
-      public void disposeInstance(OVERLAPPEDEX instance) {
-        OVERLAPPEDEX.dispose(instance);
+      public void disposeInstance(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
+        OVERLAPPED_WITH_BUFFER_AND_STATE.dispose(instance);
       }
     });
   }
@@ -34,17 +34,17 @@ final class OverlappedPool {
     pool.dispose();
   }
 
-  public OVERLAPPEDEX requestInstance() {
+  public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance() {
     return pool.requestInstance();
   }
 
-  public OVERLAPPEDEX requestInstance(final int operation) {
-    return requestInstance(operation, null, 0);
+  public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance(final int state) {
+    return requestInstance(state, null, 0);
   }
 
-  public OVERLAPPEDEX requestInstance(final int operation, final Pointer buffer, final int buffer_size) {
-    final OVERLAPPEDEX instance = requestInstance();
-    instance.op = operation;
+  public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance(final int state, final Pointer buffer, final int buffer_size) {
+    final OVERLAPPED_WITH_BUFFER_AND_STATE instance = requestInstance();
+    instance.state = state;
     instance.buffer = buffer;
     instance.bufferSize = buffer_size;
     return instance;

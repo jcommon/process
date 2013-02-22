@@ -6,16 +6,12 @@ import jcommon.process.IProcessListener;
 import jcommon.process.api.win32.Win32;
 
 import java.nio.ByteBuffer;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class ProcessInformation implements IProcess {
-  public static final ProcessInformation PROCESS_INFORMATION_STOP_SENTINEL = new ProcessInformation(0, null, null, null, null, null, true, null, null, null, null);
-
   final int pid;
   final Win32.HANDLE process;
   final Win32.HANDLE main_thread;
@@ -26,8 +22,6 @@ final class ProcessInformation implements IProcess {
 
   final AtomicBoolean starting = new AtomicBoolean(true);
   final AtomicBoolean closing = new AtomicBoolean(false);
-  final Object lock = new Object();
-  final LinkedList<Integer> outstanding_ops = new LinkedList<Integer>();
 
   final String[] command_line;
   final IProcessListener[] listeners;
@@ -35,8 +29,6 @@ final class ProcessInformation implements IProcess {
   final IEnvironmentVariable[] environment_variables;
   final CountDownLatch exit_latch = new CountDownLatch(1);
   final AtomicInteger exit_value = new AtomicInteger(0);
-  OVERLAPPEDEX ovl_read;
-  OVERLAPPEDEX ovl_write;
 
   public static interface ICreateProcessExitCallback {
     Win32.HANDLE createExitCallback(ProcessInformation process_info);
@@ -179,86 +171,9 @@ final class ProcessInformation implements IProcess {
   public void notifyError(final Throwable t) {
     for(IProcessListener listener : listeners) {
       //try {
-      listener.error(this, t);
+        listener.error(this, t);
       //} catch(Throwable ignored) {
       //}
-    }
-  }
-
-  public void incrementOps(int op) {
-    synchronized (lock) {
-      outstanding_ops.push(op);
-    }
-  }
-
-  public void decrementOps(int op) {
-    synchronized (lock) {
-      outstanding_ops.removeFirstOccurrence(op);
-    }
-  }
-
-  public void replaceOp(int op, int with) {
-    synchronized (lock) {
-      outstanding_ops.removeFirstOccurrence(op);
-      outstanding_ops.push(with);
-    }
-  }
-
-  public Integer[] outstandingOps() {
-    synchronized (lock) {
-      return outstanding_ops.toArray(new Integer[outstanding_ops.size()]);
-    }
-  }
-
-  public List<String> outstandingOpsAsString() {
-    synchronized (lock) {
-      final LinkedList<String> ret = new LinkedList<String>();
-      for(Integer op : outstanding_ops) {
-        ret.push(OVERLAPPEDEX.nameForOp(op));
-      }
-      return ret;
-    }
-  }
-
-  public boolean anyOutstandingOps() {
-    synchronized (lock) {
-      return !outstanding_ops.isEmpty();
-    }
-  }
-
-  public boolean onlyRemainingOp(final int op) {
-    synchronized (lock) {
-      return (!outstanding_ops.isEmpty() && outstanding_ops.size() == 1 && outstanding_ops.contains(op));
-    }
-  }
-
-  public boolean emptyOrOnlyRemainingOp(final int op) {
-    synchronized (lock) {
-      return (outstanding_ops.isEmpty() || (outstanding_ops.size() == 1 && outstanding_ops.contains(op)));
-    }
-  }
-
-  public boolean emptyOrOnlyRemainingOps(final int...ops) {
-    synchronized (lock) {
-      if (outstanding_ops.isEmpty())
-        return true;
-
-      //Are there any outstanding values that aren't in our list of
-      //provided, valid values?
-      boolean found;
-      for(int outstanding_op : outstanding_ops) {
-        found = false;
-        for(int op : ops) {
-          if (outstanding_op == op) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          return false;
-        }
-      }
-      return true;
     }
   }
 }

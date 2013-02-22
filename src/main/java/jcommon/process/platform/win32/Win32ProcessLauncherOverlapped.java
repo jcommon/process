@@ -1,10 +1,6 @@
 package jcommon.process.platform.win32;
 
-import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
-import com.sun.jna.PointerType;
-import com.sun.jna.Structure;
-import com.sun.jna.ptr.IntByReference;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
@@ -14,15 +10,11 @@ import jcommon.process.api.PinnableMemory;
 import jcommon.process.api.PinnableStruct;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static jcommon.process.api.JNAUtils.fromSeq;
 import static jcommon.process.api.win32.Win32.*;
-import static jcommon.process.api.win32.User32.*;
 import static jcommon.process.api.win32.Kernel32.*;
 import static jcommon.process.platform.win32.Utils.*;
 
@@ -225,24 +217,24 @@ public class Win32ProcessLauncherOverlapped {
   private static boolean read(final ProcessInformation process_info, final HANDLE hEvent, final HANDLE pipe, final int op) {
     attempt: {
 //      final OVERLAPPEDEX o = overlapped_pool.requestInstance(
-//        op,
+//        state,
 //        memory_pool.requestSlice(),
 //        memory_pool.getSliceSize()
 //      );
 
-      OVERLAPPEDEX o = new OVERLAPPEDEX();
+      OVERLAPPED_WITH_BUFFER_AND_STATE o = new OVERLAPPED_WITH_BUFFER_AND_STATE();
       o.buffer = memory_pool.requestSlice();
       o.bufferSize = memory_pool.getSliceSize();
       o.hEvent = hEvent;
 
       if (!ReadFileEx(pipe, o.buffer, o.bufferSize, o, PinnableCallback.pin(new POVERLAPPED_COMPLETION_ROUTINE() {
-        private ThreadLocal<OVERLAPPEDEX> tl = new ThreadLocal<OVERLAPPEDEX>(); {{
-          tl.set(new OVERLAPPEDEX());
+        private ThreadLocal<OVERLAPPED_WITH_BUFFER_AND_STATE> tl = new ThreadLocal<OVERLAPPED_WITH_BUFFER_AND_STATE>(); {{
+          tl.set(new OVERLAPPED_WITH_BUFFER_AND_STATE());
         }}
 
         @Override
         public void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransfered, Pointer lpOverlapped) {
-          OVERLAPPEDEX o = tl.get();
+          OVERLAPPED_WITH_BUFFER_AND_STATE o = tl.get();
           o.reuse(lpOverlapped);
 
           ByteBuffer bb = o.buffer.getByteBuffer(0, dwNumberOfBytesTransfered);
