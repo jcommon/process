@@ -37,8 +37,8 @@ public class ProcessTest {
   public void testLaunchProcess() throws Throwable {
     assertTrue(Resources.loadAllResources());
 
-    final int times = 1;
-    final int message_count = 1000;
+    final int times = 10;
+    final int message_count = 100;
     final AtomicInteger start_count = new AtomicInteger(0);
     final CountDownLatch stop_latch = new CountDownLatch(times);
 

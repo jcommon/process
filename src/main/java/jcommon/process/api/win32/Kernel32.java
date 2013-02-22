@@ -239,6 +239,7 @@ public class Kernel32 implements Win32Library {
     , WAIT_OBJECT_0             = ((STATUS_WAIT_0) + 0)
     , WAIT_FAILED               = 0xFFFFFFFF
     , WAIT_TIMEOUT              = 258
+    , WAIT_IO_COMPLETION        = 0x00C0
   ;
 
   @SuppressWarnings("unused")
@@ -306,6 +307,10 @@ public class Kernel32 implements Win32Library {
     void FileIOCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, OVERLAPPED lpOverlapped);
   }
 
+  public static interface POVERLAPPED_COMPLETION_ROUTINE extends Callback {
+    void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransfered, Pointer lpOverlapped);
+  }
+
   public static native int GetLastError();
 
   public static native HANDLE GetCurrentProcess();
@@ -330,6 +335,9 @@ public class Kernel32 implements Win32Library {
 
   public static HANDLE CreateEvent(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, String name) { return CharEncodingSpecific.CreateEvent(security, manual, initial, name); }
   public static native int     /*DWORD*/  WaitForSingleObject(HANDLE /*HANDLE*/ hHandle, int /*DWORD*/ dwMilliseconds);
+  public static native int     /*DWORD*/  WaitForSingleObjectEx(HANDLE /*HANDLE*/ hHandle, int /*DWORD*/ dwMilliseconds, boolean bAlertable);
+  public static native int WaitForMultipleObjects(int nCount, Pointer lpHandles, boolean bWaitAll, int dwMilliseconds);
+  public static native int WaitForMultipleObjects(int nCount, HANDLE2 lpHandles, boolean bWaitAll, int dwMilliseconds);
   public static native boolean /*BOOL*/   SetEvent(HANDLE /*HANDLE*/ hEvent);
 
   public static native boolean CreatePipe(HANDLEByReference hReadPipe, HANDLEByReference hWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
@@ -344,6 +352,7 @@ public class Kernel32 implements Win32Library {
   public static native boolean ReadFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED lpOverlapped);
   public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, Pointer lpCompletionRoutine);
   public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, OVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, POVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
   public static native boolean WriteFile(HANDLE hFile, byte[] lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean WriteFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean CancelIo(HANDLE hFile);
@@ -544,6 +553,43 @@ public class Kernel32 implements Win32Library {
 
     public STARTUPINFO() {
       cb = new DWORD(size());
+    }
+
+    @Override
+    protected List getFieldOrder() {
+      return FIELD_ORDER;
+    }
+  }
+
+  public static class HANDLE2 extends Structure {
+    public HANDLE h1;
+    public HANDLE h2;
+
+    private static final List FIELD_ORDER = fromSeq(
+        "h1"
+      , "h2"
+    );
+
+    public static class ByReference extends HANDLE2 implements Structure.ByReference {
+      public ByReference() {
+      }
+
+      public ByReference(Pointer memory) {
+        super(memory);
+      }
+    }
+
+    public HANDLE2() {
+    }
+
+    public HANDLE2(HANDLE h1, HANDLE h2) {
+      this.h1 = h1;
+      this.h2 = h2;
+    }
+
+    public HANDLE2(Pointer memory) {
+      super(memory);
+      read();
     }
 
     @Override

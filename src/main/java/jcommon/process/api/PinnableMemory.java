@@ -99,7 +99,7 @@ public final class PinnableMemory extends Memory {
     return new PinnableMemory(size).pin(listener);
   }
 
-  public static void unpin(Pointer ptr) {
+  public static PinnableMemory unpin(Pointer ptr) {
     final PinnableMemory mem;
     synchronized (pin_lock) {
       mem = pinned.get(ptr);
@@ -107,6 +107,7 @@ public final class PinnableMemory extends Memory {
     if (mem != null) {
       mem.unpin();
     }
+    return mem;
   }
 
   public static void dispose(Pointer ptr) {

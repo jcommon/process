@@ -66,11 +66,11 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     return instance;
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> void unpin(final U instance) {
-    PinnableStruct.<T, U>unpin(instance.getPointer());
+  public static <T extends Structure, U extends PinnableStruct<T>> U unpin(final U instance) {
+    return PinnableStruct.<T, U>unpin(instance.getPointer());
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> void unpin(final Pointer ptr) {
+  public static <T extends Structure, U extends PinnableStruct<T>> U unpin(final Pointer ptr) {
     final U instance;
 
     synchronized (pin_lock) {
@@ -97,6 +97,8 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
         instance.dispose();
       }
     }
+
+    return instance;
   }
 
   public static <T extends Structure, U extends PinnableStruct<T>> void dispose(final U instance) {

@@ -63,9 +63,9 @@ public class PinnableCallback<T extends Callback> {
     return callback;
   }
 
-  public static <C extends Callback> void unpin(final C callback) {
+  public static <C extends Callback> C unpin(final C callback) {
     if (callback == null) {
-      return;
+      return null;
     }
 
     final IPinListener listener;
@@ -92,6 +92,8 @@ public class PinnableCallback<T extends Callback> {
         ((PinnableCallback)callback).dispose();
       }
     }
+
+    return callback;
   }
 
   public static <C extends Callback> void dispose(final Callback callback) {

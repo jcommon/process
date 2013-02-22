@@ -216,7 +216,7 @@ public class Win32ProcessLauncherIOCP {
 
   private static void postThreadStop(int thread_id) {
     //Post message to thread asking him to exit.
-    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPEDEX.OP_EXITTHREAD));
+    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPEDEX.STATE_EXITTHREAD));
   }
 
   private static void ioCompletionPortProcessor(final HANDLE completion_port, final IOCompletionPortThreadInformation ti) throws Throwable {
@@ -291,7 +291,7 @@ public class Win32ProcessLauncherIOCP {
 
       //If we've received a message asking to break out of the thread, then loop back and around
       //and check that our flag has been set. If so, then it's time to go!
-      if (overlapped.op == OVERLAPPEDEX.OP_EXITTHREAD) {
+      if (overlapped.op == OVERLAPPEDEX.STATE_EXITTHREAD) {
         PinnableMemory.unpin(overlapped.buffer);
         PinnableStruct.unpin(overlapped);
 

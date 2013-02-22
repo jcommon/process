@@ -84,8 +84,8 @@ public final class OVERLAPPEDEX extends Kernel32.OVERLAPPED {
         return "OP_INITIATE_CLOSE";
       case OP_CLOSED:
         return "OP_CLOSED";
-      case OP_EXITTHREAD:
-        return "OP_EXITTHREAD";
+      case STATE_EXITTHREAD:
+        return "STATE_EXITTHREAD";
 
       default:
         return "<UNKNOWN:" + op + ">";
@@ -118,6 +118,9 @@ public final class OVERLAPPEDEX extends Kernel32.OVERLAPPED {
     , OP_CONNECTED           = 18
     , OP_INITIATE_CLOSE      = 19
     , OP_CLOSED              = 20
-    , OP_EXITTHREAD          = 21
+  ;
+
+  public static final int
+      STATE_EXITTHREAD = -1
   ;
 }

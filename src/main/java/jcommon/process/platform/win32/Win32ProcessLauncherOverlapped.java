@@ -1,6 +1,9 @@
 package jcommon.process.platform.win32;
 
+import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
+import com.sun.jna.PointerType;
+import com.sun.jna.Structure;
 import com.sun.jna.ptr.IntByReference;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
@@ -13,10 +16,13 @@ import jcommon.process.api.PinnableStruct;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static jcommon.process.api.JNAUtils.fromSeq;
 import static jcommon.process.api.win32.Win32.*;
+import static jcommon.process.api.win32.User32.*;
 import static jcommon.process.api.win32.Kernel32.*;
 import static jcommon.process.platform.win32.Utils.*;
 
@@ -156,26 +162,67 @@ public class Win32ProcessLauncherOverlapped {
 
     ResumeThread(process_info.main_thread);
 
-    ConnectNamedPipe(process_info.stdout_child_process_read, null);
+    if (!ConnectNamedPipe(stdout_child_process_read, null)) {
+      int err = GetLastError();
+      switch(err) {
+        case ERROR_PIPE_CONNECTED:
+        case ERROR_IO_PENDING:
+        case ERROR_PIPE_LISTENING:
+          //Normal operation. Nothing to see here.
+          System.err.println("OKAY");
+          break;
+        default:
+          break;
+      }
+    }
 
-    read(process_info, process_info.stdout_child_process_read, 0);
+    final HANDLE h_stdout_child_process_read = CreateEvent(null, true, false, null);
 
-    WaitForSingleObject(proc_info.hProcess, INFINITE);
-    CloseHandle(process_info.stdout_child_process_read);
+    read(process_info, h_stdout_child_process_read, stdout_child_process_read, 0);
 
-    IntByReference exit_code = new IntByReference();
-    GetExitCodeProcess(proc_info.hProcess, exit_code);
-    process_info.notifyStopped(exit_code.getValue());
-//    try {
-//      Thread.sleep(1000 * 10);
-//    } catch (InterruptedException e) {
-//      e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+//    int num_handles = 2;
+//    Pointer[] handles = new Pointer[num_handles];
+//    handles[0] = h_stdout_child_process_read.getPointer();
+//    handles[1] = proc_info.hProcess.getPointer();
+//
+//    Memory mem = new Memory(Pointer.SIZE * num_handles);
+//    for(int i = 0; i < handles.length; ++i) {
+//      mem.setPointer(Pointer.SIZE * i, handles[i]);
 //    }
+
+//    System.err.println("HERE");
+//
+//    HANDLE2 h = new HANDLE2(h_stdout_child_process_read, proc_info.hProcess);
+//
+//    int dwWait;
+//    while(true) {
+//      dwWait = WaitForMultipleObjects(2, h, false, INFINITE) - WAIT_OBJECT_0;
+//      //dwWait = WaitForMultipleObjects(1, mem.share(0L), false, INFINITE) - WAIT_OBJECT_0;
+//      if (dwWait < 0 || dwWait > 2) {
+//        break;
+//      }
+//    }
+
+//    new Thread(new Runnable() {
+//      @Override
+//      public void run() {
+//        WaitForSingleObject(proc_info.hProcess, INFINITE);
+//        CloseHandle(h_stdout_child_process_read);
+//        CloseHandle(process_info.stdout_child_process_read);
+//      }
+//    }).start();
+//
+//    while(WaitForSingleObjectEx(h_stdout_child_process_read, INFINITE, true) == WAIT_IO_COMPLETION)
+//      ;
+//
+//    IntByReference exit_code = new IntByReference();
+//    GetExitCodeProcess(proc_info.hProcess, exit_code);
+//    process_info.notifyStopped(exit_code.getValue());
 
     return process_info;
   }
 
-  private static boolean read(final ProcessInformation process_info, final HANDLE pipe, final int op) {
+  private static boolean read(final ProcessInformation process_info, final HANDLE hEvent, final HANDLE pipe, final int op) {
     attempt: {
 //      final OVERLAPPEDEX o = overlapped_pool.requestInstance(
 //        op,
@@ -186,21 +233,27 @@ public class Win32ProcessLauncherOverlapped {
       OVERLAPPEDEX o = new OVERLAPPEDEX();
       o.buffer = memory_pool.requestSlice();
       o.bufferSize = memory_pool.getSliceSize();
-      o.hEvent = CreateEvent(null, true, true, null);
+      o.hEvent = hEvent;
 
-      if (!ReadFileEx(pipe, o.buffer, o.bufferSize, o, PinnableCallback.pin(new OVERLAPPED_COMPLETION_ROUTINE() {
+      if (!ReadFileEx(pipe, o.buffer, o.bufferSize, o, PinnableCallback.pin(new POVERLAPPED_COMPLETION_ROUTINE() {
+        private ThreadLocal<OVERLAPPEDEX> tl = new ThreadLocal<OVERLAPPEDEX>(); {{
+          tl.set(new OVERLAPPEDEX());
+        }}
+
         @Override
-        public void FileIOCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, OVERLAPPED lpOverlapped) {
-          OVERLAPPEDEX o = new OVERLAPPEDEX();
-          o.reuse(lpOverlapped.getPointer());
+        public void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransfered, Pointer lpOverlapped) {
+          OVERLAPPEDEX o = tl.get();
+          o.reuse(lpOverlapped);
 
-          ByteBuffer bb = o.buffer.getByteBuffer(0, dwNumberOfBytesTransfered.longValue());
+          ByteBuffer bb = o.buffer.getByteBuffer(0, dwNumberOfBytesTransfered);
 
-          process_info.notifyStdOut(bb, dwNumberOfBytesTransfered.intValue());
+          process_info.notifyStdOut(bb, dwNumberOfBytesTransfered);
 
           PinnableMemory.unpin(o.buffer);
 
           PinnableCallback.unpin(this);
+
+          read(process_info, hEvent, pipe, op);
         }
       })) /*|| lp_bytes_read.getValue() == 0*/) {
         int err = GetLastError();
@@ -214,19 +267,6 @@ public class Win32ProcessLauncherOverlapped {
         //the error to determine the next course of action.
         PinnableStruct.unpin(o);
         PinnableMemory.unpin(o.buffer);
-      } else {
-        System.err.println("**** READFILE() COMPLETED SYNCHRONOUSLY: " + OVERLAPPEDEX.nameForOp(op));
-        IntByReference ibr = new IntByReference();
-        GetOverlappedResult(pipe, o, ibr, true);
-
-        ByteBuffer bb = o.buffer.getByteBuffer(0, ibr.getValue());
-
-        System.out.println("bb: " + Charset.defaultCharset().decode(bb));
-
-        process_info.notifyStdOut(bb, ibr.getValue());
-
-        PinnableMemory.unpin(o.buffer);
-        break attempt;
       }
     }
     return false;
