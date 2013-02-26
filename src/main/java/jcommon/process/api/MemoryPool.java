@@ -102,7 +102,13 @@ public final class MemoryPool {
     return pool.isMaximumPoolSizeInfinite();
   }
 
+  public Object getLock() {
+    return pool.getLock();
+  }
+
   public Pointer requestSlice() {
-    return pool.requestInstance();
+    synchronized (pool.getLock()) {
+      return pool.requestInstance();
+    }
   }
 }

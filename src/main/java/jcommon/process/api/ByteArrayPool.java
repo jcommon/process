@@ -59,7 +59,9 @@ public final class ByteArrayPool {
   }
 
   public Buffer requestInstance() {
-    return pool.requestInstance();
+    synchronized (pool.getLock()) {
+      return pool.requestInstance();
+    }
   }
 
   public void returnToPool(final Buffer buffer) {

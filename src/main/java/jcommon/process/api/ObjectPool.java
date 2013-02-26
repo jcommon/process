@@ -19,7 +19,8 @@
 
 package jcommon.process.api;
 
-import java.util.Stack;
+import java.util.Deque;
+import java.util.LinkedList;
 
 /**
  * Allows reuse of memory buffers to prevent memory fragmentation over time.
@@ -54,8 +55,8 @@ public class ObjectPool<T> {
   private int pool_size;
   private final int max_pool_size;
   private final Object lock = new Object();
-  private final Stack<T> used = new Stack<T>();
-  private final Stack<T> available = new Stack<T>();
+  private final Deque<T> used = new LinkedList<T>();
+  private final Deque<T> available = new LinkedList<T>();
   private final IAllocator<T> allocator;
   private boolean is_disposed = false;
 
@@ -99,6 +100,10 @@ public class ObjectPool<T> {
 
   protected void innerDispose() {
     //Do nothing. Place holder for classes extending this one.
+  }
+
+  public final Object getLock() {
+    return lock;
   }
 
   public final boolean isDisposed() {

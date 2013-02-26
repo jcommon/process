@@ -31,6 +31,15 @@ public final class OVERLAPPED_WITH_BUFFER_AND_STATE extends OVERLAPPED {
     return FIELD_ORDER;
   }
 
+  public OVERLAPPED_WITH_BUFFER_AND_STATE() {
+    super();
+  }
+
+  public OVERLAPPED_WITH_BUFFER_AND_STATE(Pointer memory) {
+    super();
+    reuse(memory);
+  }
+
   public void reuse(Pointer memory) {
     useMemory(memory);
     read();

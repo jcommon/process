@@ -240,6 +240,7 @@ public class Kernel32 implements Win32Library {
     , WAIT_FAILED               = 0xFFFFFFFF
     , WAIT_TIMEOUT              = 258
     , WAIT_IO_COMPLETION        = 0x00C0
+    , WAIT_ABANDONED            = 0x0080
   ;
 
   @SuppressWarnings("unused")
@@ -299,16 +300,16 @@ public class Kernel32 implements Win32Library {
     , WT_TRANSFER_IMPERSONATION    = 0x00000100
   ;
 
-  public static interface WAITORTIMERCALLBACK extends Callback {
+  public static interface WAITORTIMERCALLBACK extends StdCallCallback {
     void WaitOrTimerCallback(Pointer lpParameter, boolean TimerOrWaitFired);
   }
 
-  public static interface OVERLAPPED_COMPLETION_ROUTINE extends Callback {
-    void FileIOCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, OVERLAPPED lpOverlapped);
+  public static interface OVERLAPPED_COMPLETION_ROUTINE extends StdCallCallback {
+    void FileIOCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, OVERLAPPED lpOverlapped);
   }
 
-  public static interface POVERLAPPED_COMPLETION_ROUTINE extends Callback {
-    void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransfered, Pointer lpOverlapped);
+  public static interface POVERLAPPED_COMPLETION_ROUTINE extends StdCallCallback {
+    void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransferred, Pointer lpOverlapped);
   }
 
   public static native int GetLastError();

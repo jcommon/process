@@ -97,6 +97,8 @@ public class Win32ProcessLauncherOverlapped {
     //Close out the child process' stdout write.
     CloseHandle(stdout_child_process_write);
 
+    final HANDLE h_stdout_child_process_read = CreateEvent(null, true, false, null);
+
     //Associate our new process with the shared i/o completion port.
     //This is *deliberately* done after the process is created mainly so that we have
     //the process id and process handle.
@@ -127,6 +129,7 @@ public class Win32ProcessLauncherOverlapped {
 
                   //Post a message to the iocp letting it know that the child has exited.
                   //postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
+                  SetEvent(h_stdout_child_process_read);
                 }
               }),
               null,
@@ -142,7 +145,7 @@ public class Win32ProcessLauncherOverlapped {
     synchronized (io_completion_port_lock) {
       if (running_process_count.getAndIncrement() == 0) {
         memory_pool = new MemoryPool(1024, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent processes effectively since it won't give any more slices than that. */);
-        overlapped_pool = new OverlappedPool(number_of_processors);
+        overlapped_pool = new OverlappedPool(300);
       }
       processes.put(process_info.process, process_info);
     }
@@ -161,16 +164,12 @@ public class Win32ProcessLauncherOverlapped {
         case ERROR_IO_PENDING:
         case ERROR_PIPE_LISTENING:
           //Normal operation. Nothing to see here.
-          System.err.println("OKAY");
+          //System.err.println("OKAY");
           break;
         default:
           break;
       }
     }
-
-    final HANDLE h_stdout_child_process_read = CreateEvent(null, true, false, null);
-
-    read(process_info, h_stdout_child_process_read, stdout_child_process_read, 0);
 
 //    int num_handles = 2;
 //    Pointer[] handles = new Pointer[num_handles];
@@ -195,14 +194,17 @@ public class Win32ProcessLauncherOverlapped {
 //      }
 //    }
 
-//    new Thread(new Runnable() {
-//      @Override
-//      public void run() {
-//        WaitForSingleObject(proc_info.hProcess, INFINITE);
-//        CloseHandle(h_stdout_child_process_read);
-//        CloseHandle(process_info.stdout_child_process_read);
-//      }
-//    }).start();
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        do {
+          read(process_info, h_stdout_child_process_read, stdout_child_process_read, 0);
+        } while(WaitForSingleObjectEx(h_stdout_child_process_read, INFINITE, true) == WAIT_IO_COMPLETION);
+        CloseHandle(h_stdout_child_process_read);
+        CloseHandle(proc_info.hProcess);
+        process_info.notifyStopped(0);
+      }
+    }).start();
 //
 //    while(WaitForSingleObjectEx(h_stdout_child_process_read, INFINITE, true) == WAIT_IO_COMPLETION)
 //      ;
@@ -214,53 +216,57 @@ public class Win32ProcessLauncherOverlapped {
     return process_info;
   }
 
-  private static boolean read(final ProcessInformation process_info, final HANDLE hEvent, final HANDLE pipe, final int op) {
+  private static boolean read(final ProcessInformation process_info, final HANDLE hEvent, final HANDLE pipe, final int state) {
     attempt: {
-//      final OVERLAPPEDEX o = overlapped_pool.requestInstance(
-//        state,
-//        memory_pool.requestSlice(),
-//        memory_pool.getSliceSize()
-//      );
+//      synchronized (memory_pool.getLock()) {
+//        final OVERLAPPED_WITH_BUFFER_AND_STATE o = overlapped_pool.requestInstance(
+//          state,
+//          hEvent
+//        );
+
 
       OVERLAPPED_WITH_BUFFER_AND_STATE o = new OVERLAPPED_WITH_BUFFER_AND_STATE();
       o.buffer = memory_pool.requestSlice();
       o.bufferSize = memory_pool.getSliceSize();
       o.hEvent = hEvent;
 
-      if (!ReadFileEx(pipe, o.buffer, o.bufferSize, o, PinnableCallback.pin(new POVERLAPPED_COMPLETION_ROUTINE() {
-        private ThreadLocal<OVERLAPPED_WITH_BUFFER_AND_STATE> tl = new ThreadLocal<OVERLAPPED_WITH_BUFFER_AND_STATE>(); {{
-          tl.set(new OVERLAPPED_WITH_BUFFER_AND_STATE());
-        }}
+        final POVERLAPPED_COMPLETION_ROUTINE callback = PinnableCallback.pin(new POVERLAPPED_COMPLETION_ROUTINE() {
+          @Override
+          public void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransferred, Pointer lpOverlapped) {
+            OVERLAPPED_WITH_BUFFER_AND_STATE o = new OVERLAPPED_WITH_BUFFER_AND_STATE(lpOverlapped);
 
-        @Override
-        public void FileIOCompletionRoutine(int dwErrorCode, int dwNumberOfBytesTransfered, Pointer lpOverlapped) {
-          OVERLAPPED_WITH_BUFFER_AND_STATE o = tl.get();
-          o.reuse(lpOverlapped);
+            //synchronized (memory_pool.getLock()) {
+              ByteBuffer bb = o.buffer.getByteBuffer(0, dwNumberOfBytesTransferred);
 
-          ByteBuffer bb = o.buffer.getByteBuffer(0, dwNumberOfBytesTransfered);
+              process_info.notifyStdOut(bb, dwNumberOfBytesTransferred);
 
-          process_info.notifyStdOut(bb, dwNumberOfBytesTransfered);
 
+              PinnableCallback.unpin(this);
+              PinnableMemory.unpin(o.buffer);
+            //  PinnableStruct.unpin(o);
+            //}
+
+            //read(process_info, hEvent, pipe, op);
+          }
+        });
+
+        if (!ReadFileEx(pipe, o.buffer, o.bufferSize, o, callback) /*|| lp_bytes_read.getValue() == 0*/) {
+          int err = GetLastError();
+          switch(err) {
+            case ERROR_IO_PENDING:
+              //Normal operation. Nothing to see here.
+              return true;
+          }
+
+          //For abnormal completion, clean up pinned instances and re-evaluate
+          //the error to determine the next course of action.
+          //PinnableStruct.unpin(o);
           PinnableMemory.unpin(o.buffer);
-
-          PinnableCallback.unpin(this);
-
-          read(process_info, hEvent, pipe, op);
+        } else {
+          //callback.FileIOCompletionRoutine(GetLastError(), o.bufferSize, o.getPointer());
         }
-      })) /*|| lp_bytes_read.getValue() == 0*/) {
-        int err = GetLastError();
-        switch(err) {
-          case ERROR_IO_PENDING:
-            //Normal operation. Nothing to see here.
-            return true;
-        }
-
-        //For abnormal completion, clean up pinned instances and re-evaluate
-        //the error to determine the next course of action.
-        PinnableStruct.unpin(o);
-        PinnableMemory.unpin(o.buffer);
       }
-    }
+//    }
     return false;
   }
 }
