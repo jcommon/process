@@ -23,6 +23,7 @@ import com.sun.jna.*;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 import jcommon.process.api.PinnableStruct;
+import jcommon.process.platform.win32.OVERLAPPED_WITH_BUFFER_AND_STATE;
 
 import java.nio.Buffer;
 import java.util.List;
@@ -327,11 +328,14 @@ public class Kernel32 implements Win32Library {
   public static native HANDLE  /*HANDLE*/ CreateIoCompletionPort(HANDLE /*HANDLE*/ fileHandle, HANDLE /*HANDLE*/ existingCompletionPort, Pointer /*ULONG_PTR*/ completionKey, int /*DWORD*/ numberOfConcurrentThreads);
   public static native boolean /*BOOL*/   GetQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, IntByReference /*LPDWORD*/ lpNumberOfBytes, PointerByReference /*PULONG_PTR*/ lpCompletionKey, PointerByReference /*LPOVERLAPPED*/ lpOverlapped, int /*DWORD*/ dwMilliseconds);
   public static native boolean /*BOOL*/   GetQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, IntByReference /*LPDWORD*/ lpNumberOfBytes, IntByReference /*PULONG_PTR*/ lpCompletionKey, PointerByReference /*LPOVERLAPPED*/ lpOverlapped, int /*DWORD*/ dwMilliseconds);
-  public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, Pointer /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED /*LPOVERLAPPED*/ lpOverlapped);
-  public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, int /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED /*LPOVERLAPPED*/ lpOverlapped);
+  //public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, Pointer /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED /*LPOVERLAPPED*/ lpOverlapped);
+  //public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, int /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED /*LPOVERLAPPED*/ lpOverlapped);
+  public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, int /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED_WITH_BUFFER_AND_STATE /*LPOVERLAPPED*/ lpOverlapped);
+  public static native boolean /*BOOL*/   PostQueuedCompletionStatus(HANDLE /*HANDLE*/ completionPort, int /*DWORD*/ dwNumberOfBytesTransferred, Pointer /*ULONG_PTR*/ dwCompletionKey, OVERLAPPED_WITH_BUFFER_AND_STATE /*LPOVERLAPPED*/ lpOverlapped);
   public static native boolean /*BOOL*/   FlushFileBuffers(HANDLE hFile);
   public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, Pointer /*OVERLAPPED*/ lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
-  public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, OVERLAPPED lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
+  //public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, OVERLAPPED lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
+  public static native boolean /*BOOL*/   GetOverlappedResult(HANDLE hFile, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped, IntByReference lpNumberOfBytesTransferred, boolean bWait);
 
 
   public static HANDLE CreateEvent(SECURITY_ATTRIBUTES security, boolean manual, boolean initial, String name) { return CharEncodingSpecific.CreateEvent(security, manual, initial, name); }
@@ -351,9 +355,14 @@ public class Kernel32 implements Win32Library {
   public static HANDLE CreateFile(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile) { return CharEncodingSpecific.CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
   public static native boolean ReadFile(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED lpOverlapped);
   public static native boolean ReadFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED lpOverlapped);
+  public static native boolean ReadFile(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped);
+  public static native boolean ReadFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToRead, IntByReference lpNumberOfBytesRead, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped);
   public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, Pointer lpCompletionRoutine);
   public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, OVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
   public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED lpOverlapped, POVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped, Pointer lpCompletionRoutine);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped, OVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
+  public static native boolean ReadFileEx(HANDLE hFile, Pointer lpBuffer, int nNumberOfBytesToRead, OVERLAPPED_WITH_BUFFER_AND_STATE lpOverlapped, POVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
   public static native boolean WriteFile(HANDLE hFile, byte[] lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean WriteFile(HANDLE hFile, Buffer lpBuffer, int nNumberOfBytesToWrite, IntByReference lpNumberOfBytesWritten, OVERLAPPED lpOverlapped);
   public static native boolean CancelIo(HANDLE hFile);
@@ -433,20 +442,32 @@ public class Kernel32 implements Win32Library {
     public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessW(lpApplicationName == null ? null : new WString(lpApplicationName), lpCommandLine != null ? new WString(lpCommandLine) : null, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
   }
 
-  public static class OVERLAPPED extends PinnableStruct<OVERLAPPED> {
+  public static class Offset extends Union {
+    public DWORD Offset;
+    public DWORD OffsetHigh;
+  }
+
+  public static class OVERLAPPED extends Structure {
     public ULONG_PTR Internal;
     public ULONG_PTR InternalHigh;
-    public int Offset;
-    public int OffsetHigh;
+    public Offset Offset;
     public HANDLE hEvent;
 
     private static final List FIELD_ORDER = fromSeq(
         "Internal"
       , "InternalHigh"
       , "Offset"
-      , "OffsetHigh"
       , "hEvent"
     );
+
+    public OVERLAPPED() {
+      super();
+    }
+
+    public OVERLAPPED(Pointer memory) {
+      super(memory);
+      read();
+    }
 
     @Override
     protected List getFieldOrder() {

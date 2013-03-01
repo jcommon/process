@@ -8,6 +8,12 @@ import static jcommon.process.api.win32.Kernel32.*;
 public final class Utils {
   private static final AtomicInteger overlapped_pipe_serial_number = new AtomicInteger(0);
 
+  public static void gc() {
+    for(int i = 0; i < 15; ++i) {
+      System.gc();
+    }
+  }
+
   public static int indexOfAny(final String value, final String lookingFor) {
     for(int i = 0; i < lookingFor.length(); ++i) {
       int index = lookingFor.indexOf(lookingFor.charAt(i));
@@ -75,10 +81,12 @@ public final class Utils {
       final StringBuilder sb = new StringBuilder(len);
 
       if (is_cmd_exe) {
-        sb.append('^');
+        //sb.append('^');
       }
 
-      sb.append('\"');
+      if (!is_cmd_exe) {
+        sb.append('\"');
+      }
 
       char c;
       int number_backslashes;
@@ -118,10 +126,12 @@ public final class Utils {
       }
 
       if (is_cmd_exe) {
-        sb.append('^');
+        //sb.append('^');
       }
 
-      sb.append('\"');
+      if (!is_cmd_exe) {
+        sb.append('\"');
+      }
       return sb.toString();
     }
   }

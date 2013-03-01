@@ -53,7 +53,7 @@ public final class MemoryPool {
 
     this.pin_listener = new PinnableMemory.IPinListener() {
       @Override
-      public boolean unpinned(final PinnableMemory memory) {
+      public boolean unpinned(final Pointer memory) {
         //Don't dispose of the memory. We want to manage it ourselves.
         //Just return it to the pool. Returning false instructs PinnableMemory
         //to not dispose of the memory.

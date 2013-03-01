@@ -14,11 +14,12 @@
 //import java.util.Map;
 //import java.util.concurrent.atomic.AtomicInteger;
 //
-//import static jcommon.process.api.win32.Win32.*;
 //import static jcommon.process.api.win32.Kernel32.*;
-//import static jcommon.process.platform.win32.Utils.*;
+//import static jcommon.process.api.win32.Win32.*;
+//import static jcommon.process.platform.win32.Utils.CreateOverlappedPipe;
+//import static jcommon.process.platform.win32.Utils.formulateSanitizedCommandLine;
 //
-//public class Win32ProcessLauncherOverlapped {
+//public class Win32ProcessLauncherOverlapped2 {
 //  private static final Object io_completion_port_lock = new Object();
 //  private static final Map<HANDLE, ProcessInformation> processes = new HashMap<HANDLE, ProcessInformation>(2);
 //  private static final AtomicInteger running_process_count = new AtomicInteger(0);

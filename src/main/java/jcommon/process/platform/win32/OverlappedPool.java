@@ -5,27 +5,25 @@ import jcommon.process.api.ObjectPool;
 import jcommon.process.api.PinnableStruct;
 
 final class OverlappedPool {
-  private final ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE> pool;
-  private final PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE> pin_listener;
+  private final ObjectPool<Pointer> pool;
+  private final PinnableStruct.IPinListener pin_listener;
 
   public OverlappedPool(int initialPoolSize) {
-    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
+    this.pin_listener = new PinnableStruct.IPinListener() {
       @Override
-      public boolean unpinned(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
+      public void unpinned(Pointer instance) {
         pool.returnToPool(instance);
-        return false;
       }
     };
 
-    this.pool = new ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
+    this.pool = new ObjectPool<Pointer>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<Pointer>() {
       @Override
-      public OVERLAPPED_WITH_BUFFER_AND_STATE allocateInstance() {
-        return OVERLAPPED_WITH_BUFFER_AND_STATE.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE(), pin_listener);
+      public Pointer allocateInstance() {
+        return PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE(), pin_listener).getPointer();
       }
 
       @Override
-      public void disposeInstance(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
-        OVERLAPPED_WITH_BUFFER_AND_STATE.dispose(instance);
+      public void disposeInstance(Pointer instance) {
       }
     });
   }
@@ -35,7 +33,9 @@ final class OverlappedPool {
   }
 
   public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance() {
-    return pool.requestInstance();
+    //synchronized (pool.getLock()) {
+      return new OVERLAPPED_WITH_BUFFER_AND_STATE(pool.requestInstance());
+    //}
   }
 
   public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance(final int state) {
@@ -43,10 +43,13 @@ final class OverlappedPool {
   }
 
   public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance(final int state, final Pointer buffer, final int buffer_size) {
-    final OVERLAPPED_WITH_BUFFER_AND_STATE instance = requestInstance();
-    instance.state = state;
-    instance.buffer = buffer;
-    instance.bufferSize = buffer_size;
-    return instance;
+    //synchronized (pool.getLock()) {
+      final OVERLAPPED_WITH_BUFFER_AND_STATE instance = new OVERLAPPED_WITH_BUFFER_AND_STATE(pool.requestInstance());
+      instance.state = state;
+//      instance.iocpBuffer = new IOCPBUFFER();
+//      instance.iocpBuffer.buffer = buffer;
+//      instance.iocpBuffer.bufferSize = buffer_size;
+      return instance;
+    //}
   }
 }

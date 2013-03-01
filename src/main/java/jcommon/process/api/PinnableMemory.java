@@ -23,6 +23,9 @@ import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -30,13 +33,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * unpinned ({@link #unpin()}).
  */
 public final class PinnableMemory extends Memory {
-  private static final HashMap<Pointer, PinnableMemory> pinned = new HashMap<Pointer, PinnableMemory>(2, 1.0f);
-  private static final HashMap<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
+  private static final Set<Pointer> pinned = new HashSet<Pointer>(2, 1.0f);
+  private static final Map<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
   private static final Object pin_lock = new Object();
   private static final Object listeners_lock = new Object();
 
   public static interface IPinListener {
-    boolean unpinned(PinnableMemory memory);
+    boolean unpinned(Pointer memory);
   }
 
   public PinnableMemory(long size) {
@@ -56,7 +59,7 @@ public final class PinnableMemory extends Memory {
 
   public PinnableMemory pin(final IPinListener listener) {
     synchronized (pin_lock) {
-      pinned.put(this, this);
+      pinned.add(this);
     }
 
     synchronized (listeners_lock) {
@@ -99,26 +102,34 @@ public final class PinnableMemory extends Memory {
     return new PinnableMemory(size).pin(listener);
   }
 
-  public static PinnableMemory unpin(Pointer ptr) {
-    final PinnableMemory mem;
+  public static void unpin(Pointer ptr) {
     synchronized (pin_lock) {
-      mem = pinned.get(ptr);
+      pinned.remove(ptr);
     }
-    if (mem != null) {
-      mem.unpin();
+
+    final IPinListener listener;
+    synchronized (listeners_lock) {
+      listener = listeners.remove(ptr);
     }
-    return mem;
+
+    if (listener != null) {
+      if (listener.unpinned(ptr)) {
+        if (ptr instanceof PinnableMemory)
+          ((PinnableMemory)ptr).dispose();
+      }
+      //If the listener returns false, then we do not
+      //explicitly dispose of the memory -- the user will
+      //need to take care of that himself.
+    } else {
+      if (ptr instanceof PinnableMemory)
+        ((PinnableMemory)ptr).dispose();
+    }
   }
 
   public static void dispose(Pointer ptr) {
     final PinnableMemory mem;
     synchronized (pin_lock) {
-      mem = pinned.get(ptr);
-    }
-
-    if (mem != null) {
-      mem.dispose();
-      return;
+      pinned.remove(ptr);
     }
 
     if (ptr instanceof PinnableMemory) {

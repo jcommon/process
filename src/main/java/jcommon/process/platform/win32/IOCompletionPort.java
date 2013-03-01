@@ -1,5 +1,6 @@
 package jcommon.process.platform.win32;
 
+import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
@@ -20,19 +21,20 @@ import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Kernel32.*;
 
 public class IOCompletionPort<TAssociation extends Object> implements Serializable {
-  private static final int number_of_processors = Runtime.getRuntime().availableProcessors();
+  private Object memory_pool = null;
+  private Object overlapped_pool = null;
 
-  private MemoryPool memory_pool = null;
-  private OverlappedPool overlapped_pool = null;
+  private static final int number_of_processors = Runtime.getRuntime().availableProcessors();
+  private static final int number_of_threads = number_of_processors * 2;
 
   private HANDLE io_completion_port = INVALID_HANDLE_VALUE;
   private final Object io_completion_port_lock = new Object();
   private final AtomicInteger running_count = new AtomicInteger(0);
   private final AtomicInteger running_io_completion_port_thread_count = new AtomicInteger(0);
   private final ThreadGroup io_completion_port_thread_group = new ThreadGroup("external processes");
-  private final CyclicBarrier io_completion_port_thread_pool_barrier_start = new CyclicBarrier(number_of_processors + 1);
-  private final CyclicBarrier io_completion_port_thread_pool_barrier_stop = new CyclicBarrier(number_of_processors + 1);
-  private final IOCompletionPortThreadInformation[] io_completion_port_thread_pool = new IOCompletionPortThreadInformation[number_of_processors];
+  private final CyclicBarrier io_completion_port_thread_pool_barrier_start = new CyclicBarrier(number_of_threads + 1);
+//  private final CyclicBarrier io_completion_port_thread_pool_barrier_stop = new CyclicBarrier(number_of_threads + 1);
+  private final IOCompletionPortThreadInformation[] io_completion_port_thread_pool = new IOCompletionPortThreadInformation[number_of_threads];
   private final LinkedBlockingQueue<AssociationInformation<TAssociation>> release_queue = new LinkedBlockingQueue<AssociationInformation<TAssociation>>();
   private final Map<Pointer, AssociationInformation<TAssociation>> associations = new HashMap<Pointer, AssociationInformation<TAssociation>>(2);
 
@@ -51,7 +53,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   }
 
   public static interface IProcessor<TAssociation extends Object> {
-    void process(int state, Pointer buffer, int bufferSize, TAssociation association, Pointer completionKey, Pointer pOverlapped, IntByReference pBytesTransferred, OverlappedPool overlappedPool, MemoryPool memoryPool, IOCompletionPort<TAssociation> iocp) throws Throwable;
+    void process(int state, int bytesTransferred, OVERLAPPED_WITH_BUFFER_AND_STATE ovl, TAssociation association, Pointer completionKey, Pointer pOverlapped, IntByReference pBytesTransferred, Object overlappedPool, Object memoryPool, IOCompletionPort<TAssociation> iocp) throws Throwable;
   }
 
   private static class AssociationInformation<TAssociation extends Object> {
@@ -171,16 +173,16 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   private boolean initialize() {
     synchronized (io_completion_port_lock) {
       if (running_count.getAndIncrement() == 0 && io_completion_port == INVALID_HANDLE_VALUE) {
-        memory_pool = new MemoryPool(1024, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent associations effectively since it won't give any more slices than that. */);
-        overlapped_pool = new OverlappedPool(number_of_processors);
-        io_completion_port = CreateUnassociatedIoCompletionPort(Runtime.getRuntime().availableProcessors());
+        //memory_pool = new MemoryPool(1024, number_of_processors, MemoryPool.INFINITE_SLICE_COUNT /* Should be max # of concurrent associations effectively since it won't give any more slices than that. */);
+        //overlapped_pool = new OverlappedPool(number_of_processors);
+        io_completion_port = CreateUnassociatedIoCompletionPort(number_of_processors);
 
         //Ensure everything was created successfully. If not, cleanup and get out of here.
         if (io_completion_port == null || io_completion_port == INVALID_HANDLE_VALUE) {
-          overlapped_pool.dispose();
+          //overlapped_pool.dispose();
           overlapped_pool = null;
 
-          memory_pool.dispose();
+          //memory_pool.dispose();
           memory_pool = null;
 
           running_count.decrementAndGet();
@@ -215,7 +217,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
         //Create thread pool.
         running_io_completion_port_thread_count.set(0);
         io_completion_port_thread_pool_barrier_start.reset();
-        io_completion_port_thread_pool_barrier_stop.reset();
+//        io_completion_port_thread_pool_barrier_stop.reset();
         for(int i = 0; i < io_completion_port_thread_pool.length; ++i) {
           final IOCompletionPortThreadInformation ti = new IOCompletionPortThreadInformation(this, i);
           final Runnable r = new Runnable() { @Override
@@ -226,11 +228,11 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
             } catch(Throwable t) {
               t.printStackTrace();
             } finally {
-              try {
-                io_completion_port_thread_pool_barrier_stop.await();
-              } catch(Throwable t) {
-                t.printStackTrace();
-              }
+//              try {
+//                io_completion_port_thread_pool_barrier_stop.await();
+//              } catch(Throwable t) {
+//                t.printStackTrace();
+//              }
             }
           } };
           ti.thread = new Thread(io_completion_port_thread_group, r, "thread-" + running_io_completion_port_thread_count.incrementAndGet());
@@ -271,7 +273,6 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   }
 
   private void completion_thread(final HANDLE completion_port, final IOCompletionPortThreadInformation ti) throws Throwable {
-    final OVERLAPPED_WITH_BUFFER_AND_STATE overlapped = new OVERLAPPED_WITH_BUFFER_AND_STATE();
     final IntByReference pBytesTransferred = new IntByReference();
     final PointerByReference ppOverlapped = new PointerByReference();
     final IntByReference pCompletionKey = new IntByReference();
@@ -294,7 +295,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
       //    completion port, the function stores information about the failed operation in the variables pointed to by
       //    lpNumberOfBytes, lpCompletionKey, and lpOverlapped. To get extended error information, call GetLastError.
       if (!GetQueuedCompletionStatus(completion_port, pBytesTransferred, pCompletionKey, ppOverlapped, INFINITE)) {
-        err = GetLastError();
+        err = Native.getLastError();
         switch(err) {
           //If a call to GetQueuedCompletionStatus fails because the completion port handle associated with it is
           //closed while the call is outstanding, the function returns FALSE, *lpOverlapped will be NULL, and
@@ -307,27 +308,6 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
           case ERROR_ABANDONED_WAIT_0:
             //The associated port has been closed -- abandon further processing.
             return;
-//          case ERROR_BROKEN_PIPE:
-//            //Other end of pipe has closed. So all outstanding operations at this point must close.
-//            //Send a message out indicating that it's time to close.
-//
-//            process.reuse(Pointer.createConstant(pCompletionKey.getValue()));
-//            process_info = associations.get(process);
-//
-//            overlapped.reuse(ppOverlapped.getValue());
-//
-//            if (process_info != null) {
-//              process_info.decrementOps(overlapped.state);
-//              postOpMessage(process_info, OVERLAPPEDEX.OP_CHILD_DISCONNECT);
-//            }
-//
-//            PinnableMemory.unpin(overlapped.buffer);
-//            PinnableStruct.unpin(overlapped);
-//            continue;
-//          case ERROR_INVALID_HANDLE:
-//            continue;
-//          default:
-//            continue;
         }
       }
 
@@ -338,60 +318,37 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
       if ((pOverlapped = ppOverlapped.getValue()) == null || pOverlapped == Pointer.NULL) {
         continue;
       }
-      overlapped.reuse(pOverlapped);
 
-      //If we've received a message asking to break out of the thread, then loop back and around
-      //and check that our flag has been set. If so, then it's time to go!
-      if (overlapped.state == OVERLAPPED_WITH_BUFFER_AND_STATE.STATE_EXITTHREAD) {
-        PinnableMemory.unpin(overlapped.buffer);
-        PinnableStruct.unpin(overlapped);
-
-        //The completion key will be an integer id indicating the thread that this message is
-        //intended for. If the ids match, then get out of here, otherwise relay the message.
-        final int thread_id = pCompletionKey.getValue();
-        if (thread_id == ti.id) {
-          continue;
-        } else {
-          postThreadStop(thread_id);
-          break;
-        }
-      }
+      OVERLAPPED_WITH_BUFFER_AND_STATE overlapped = new OVERLAPPED_WITH_BUFFER_AND_STATE(pOverlapped);
 
       final Pointer completionKey = Pointer.createConstant(pCompletionKey.getValue());
 
       //If, for some unknown reason, we are processing an event for a port we haven't seen before,
       //then go ahead and ignore it.
       final AssociationInformation<TAssociation> association_info = associations.get(completionKey);
-      if (association_info == null) {
-        PinnableMemory.unpin(overlapped.buffer);
-        PinnableStruct.unpin(overlapped);
-        continue;
-      }
-
-      //association_info.decrementOps(overlapped.state);
-
-      //System.err.println("PID: " + process_info.pid + ", STATE: " + OVERLAPPEDEX.nameForState(overlapped.state));
-      //System.err.println("PID " + process_info.getPID() + ", STATE: " + OVERLAPPEDEX.nameForState(overlapped.state) + " " + process_info.outstandingOpsAsString());
 
       try {
-        processor.process(overlapped.state, overlapped.buffer, overlapped.bufferSize, association_info.association, completionKey, pOverlapped, pBytesTransferred, overlapped_pool, memory_pool, this);
+        processor.process(overlapped.state, pBytesTransferred.getValue(), overlapped, association_info.association, completionKey, pOverlapped, pBytesTransferred, overlapped_pool, memory_pool, this);
       } catch(Throwable t) {
         t.printStackTrace();
       } finally {
         PinnableStruct.unpin(overlapped);
-        PinnableMemory.unpin(overlapped.buffer);
       }
     }
   }
 
   public void postMessage(final Pointer completionKey, final int state) {
     //associations.get(completionKey).incrementOps(state);
-    PostQueuedCompletionStatus(io_completion_port, 0, completionKey, overlapped_pool.requestInstance(state));
+    OVERLAPPED_WITH_BUFFER_AND_STATE o = PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE());
+    o.state = state;
+    PostQueuedCompletionStatus(io_completion_port, 0, completionKey, o);
   }
 
   private void postThreadStop(int thread_id) {
     //Post message to thread asking him to exit.
-    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, overlapped_pool.requestInstance(OVERLAPPED_WITH_BUFFER_AND_STATE.STATE_EXITTHREAD));
+    OVERLAPPED_WITH_BUFFER_AND_STATE o = new OVERLAPPED_WITH_BUFFER_AND_STATE();
+    //o.state = OVERLAPPED_WITH_BUFFER_AND_STATE.STATE_EXITTHREAD;
+//    PostQueuedCompletionStatus(io_completion_port, 0, thread_id, o);
   }
 
   public void release(final Pointer completionKey) {
@@ -406,19 +363,19 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
         }
 
         //Wait for the threads to stop.
-        try { io_completion_port_thread_pool_barrier_stop.await(); } catch(Throwable t) { }
+        //try { io_completion_port_thread_pool_barrier_stop.await(); } catch(Throwable t) { }
 
         //Ask the reaper to stop.
-        try { release_queue.put(AssociationInformation.STOP_SENTINEL); } catch (Throwable t) { }
+        //try { release_queue.put(AssociationInformation.STOP_SENTINEL); } catch (Throwable t) { }
 
         //Closing this could result in an ERROR_ABANDONED_WAIT_0 on threads' GetQueuedCompletionStatus() call.
         CloseHandle(io_completion_port);
         io_completion_port = INVALID_HANDLE_VALUE;
 
-        memory_pool.dispose();
+        //memory_pool.dispose();
         memory_pool = null;
 
-        overlapped_pool.dispose();
+        //overlapped_pool.dispose();
         overlapped_pool = null;
       }
     }

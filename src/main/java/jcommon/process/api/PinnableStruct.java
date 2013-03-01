@@ -23,18 +23,19 @@ import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 
 import java.util.HashMap;
+import java.util.HashSet;
 
 /**
  *
  */
 public abstract class PinnableStruct<T extends Structure> extends Structure {
-  private static final HashMap<Pointer, PinnableStruct> pinned = new HashMap<Pointer, PinnableStruct>(2, 1.0f);
+  private static final HashSet<Pointer> pinned = new HashSet<Pointer>(2, 1.0f);
   private static final HashMap<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
   private static final Object pin_lock = new Object();
   private static final Object listeners_lock = new Object();
 
-  public static interface IPinListener<T extends PinnableStruct> {
-    boolean unpinned(T instance);
+  public static interface IPinListener {
+    void unpinned(Pointer instance);
   }
 
   public void dispose() {
@@ -46,15 +47,15 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     read();
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> U pin(final U instance) {
+  public static <T extends Structure> T pin(final T instance) {
     return pin(instance, null);
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> U pin(final U instance, final IPinListener<U> listener) {
+  public static <T extends Structure> T pin(final T instance, final IPinListener listener) {
     final Pointer ptr = instance.getPointer();
 
     synchronized (pin_lock) {
-      pinned.put(ptr, instance);
+      pinned.add(ptr);
     }
 
     synchronized (listeners_lock) {
@@ -66,55 +67,44 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     return instance;
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> U unpin(final U instance) {
-    return PinnableStruct.<T, U>unpin(instance.getPointer());
+  public static Pointer pin(final Pointer ptr) {
+    return pin(ptr, null);
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> U unpin(final Pointer ptr) {
-    final U instance;
+  public static Pointer pin(final Pointer ptr, final IPinListener listener) {
 
     synchronized (pin_lock) {
-      instance = (U)pinned.get(ptr);
-      if (instance != null) {
-        pinned.remove(ptr);
-      }
+      pinned.add(ptr);
     }
 
-    if (instance != null) {
-      final IPinListener listener;
-      synchronized (listeners_lock) {
-        listener = listeners.remove(ptr);
-      }
-
+    synchronized (listeners_lock) {
       if (listener != null) {
-        if (listener.unpinned(instance)) {
-          instance.dispose();
-        }
-        //If the listener returns false, then we do not
-        //explicitly dispose of the memory -- the user will
-        //need to take care of that himself.
-      } else {
-        instance.dispose();
+        listeners.put(ptr, listener);
       }
     }
 
-    return instance;
+    return ptr;
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> void dispose(final U instance) {
-    PinnableStruct.<T, U>dispose(instance.getPointer());
+  public static <T extends Structure> void unpin(final T instance) {
+    PinnableStruct.unpin(instance.getPointer());
   }
 
-  public static <T extends Structure, U extends PinnableStruct<T>> void dispose(final Pointer ptr) {
-    final U instance;
-
+  public static void unpin(final Pointer ptr) {
     synchronized (pin_lock) {
-      instance = (U)pinned.get(ptr);
+      pinned.remove(ptr);
     }
 
-    if (instance != null) {
-      instance.dispose();
-      return;
+    final IPinListener listener;
+    synchronized (listeners_lock) {
+      listener = listeners.remove(ptr);
+    }
+
+    if (listener != null) {
+      listener.unpinned(ptr);
+      //If the listener returns false, then we do not
+      //explicitly dispose of the memory -- the user will
+      //need to take care of that himself.
     }
   }
 }

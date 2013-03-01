@@ -31,36 +31,59 @@ public abstract class ProcessListener implements IProcessListener {
   private static final Object buffer_pool_lock = new Object();
   private static final AtomicInteger running = new AtomicInteger(0);
 
-  @Override
-  public final void started(IProcess process) throws Throwable {
+  private void init() {
     synchronized (buffer_pool_lock) {
       if (running.getAndIncrement() == 0) {
         buffer_pool = new ByteArrayPool(2, 1024);
       }
     }
+  }
+
+  private void check() {
+    synchronized (buffer_pool_lock) {
+      if (buffer_pool == null) {
+        init();
+      }
+    }
+  }
+
+  private void release() {
+    synchronized (buffer_pool_lock) {
+      if (running.decrementAndGet() == 0) {
+        //buffer_pool.dispose();
+        //buffer_pool = null;
+      }
+    }
+  }
+
+  @Override
+  public final void started(IProcess process) throws Throwable {
+    init();
 
     processStarted(process);
   }
 
   @Override
   public final void stopped(IProcess process, int exitCode) throws Throwable {
-    synchronized (buffer_pool_lock) {
-      if (running.decrementAndGet() == 0) {
-        buffer_pool.dispose();
-        buffer_pool = null;
-      }
-    }
+    //Thread.sleep(3000);
+    release();
 
+    synchronized (process) {
     processStopped(process, exitCode);
+    }
   }
 
   @Override
   public final void stdout(IProcess process, ByteBuffer buffer, int bytesRead) throws Throwable {
-    final ByteArrayPool.Buffer pool_buffer = buffer_pool.requestInstance();
-    try {
-      stdout(process, buffer, bytesRead, pool_buffer.getBuffer(), pool_buffer.getBufferSize());
-    } finally {
-      buffer_pool.returnToPool(pool_buffer);
+//    check();
+//    final ByteArrayPool.Buffer pool_buffer = buffer_pool.requestInstance();
+//    try {
+//      stdout(process, buffer, bytesRead, pool_buffer.getBuffer(), pool_buffer.getBufferSize());
+//    } finally {
+//      buffer_pool.returnToPool(pool_buffer);
+//    }
+    synchronized (process) {
+    stdout(process, buffer, bytesRead, new byte[bytesRead], bytesRead);
     }
   }
 

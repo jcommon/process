@@ -1,17 +1,24 @@
 package jcommon.process.platform.win32;
 
+import com.sun.jna.Pointer;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.win32.Win32;
 
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class ProcessInformation implements IProcess {
+  public static final int
+      MAX_SEQUENCE_NUMBER = 5001
+  ;
+
   final int pid;
   final Win32.HANDLE process;
   final Win32.HANDLE main_thread;
@@ -29,6 +36,16 @@ final class ProcessInformation implements IProcess {
   final IEnvironmentVariable[] environment_variables;
   final CountDownLatch exit_latch = new CountDownLatch(1);
   final AtomicInteger exit_value = new AtomicInteger(0);
+
+  int readSequenceNumber = 0;
+  int currentReadSequenceNumber = 0;
+  final Map<Integer, IOCPBUFFER> readBufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
+  final Object readLock = new Object();
+
+  int writeSequenceNumber = 0;
+  int currentWriteSequenceNumber = 0;
+  final Map<Integer, IOCPBUFFER> writeBufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
+  final Object writeLock = new Object();
 
   public static interface ICreateProcessExitCallback {
     Win32.HANDLE createExitCallback(ProcessInformation process_info);
@@ -48,6 +65,50 @@ final class ProcessInformation implements IProcess {
     this.environment_variables = environment_variables;
 
     this.process_exit_wait = callback != null ? callback.createExitCallback(this) : null;
+  }
+
+  public void incrementReadSequenceNumber() {
+    synchronized (readLock) {
+      readSequenceNumber = (currentReadSequenceNumber + 1) % MAX_SEQUENCE_NUMBER;
+    }
+  }
+
+  public void incrementWriteSequenceNumber() {
+    synchronized (writeLock) {
+      writeSequenceNumber = (currentWriteSequenceNumber + 1) % MAX_SEQUENCE_NUMBER;
+    }
+  }
+
+  public IOCPBUFFER nextReadBuffer() {
+    return nextReadBuffer(null);
+  }
+
+  public IOCPBUFFER nextReadBuffer(IOCPBUFFER iocpBuffer) {
+    synchronized (readLock) {
+      IOCPBUFFER retBuff;
+
+      if (iocpBuffer != null) {
+        int buffer_sequence_number = iocpBuffer.sequenceNumber;
+        if (buffer_sequence_number == currentReadSequenceNumber) {
+          return iocpBuffer;
+        }
+
+        retBuff = readBufferMap.get(buffer_sequence_number);
+        if (retBuff != null) {
+          //Duplicate key -- probably not good!
+          return null;
+        }
+
+        //Add to map.
+        readBufferMap.put(buffer_sequence_number, iocpBuffer);
+      }
+
+      retBuff = readBufferMap.get(currentReadSequenceNumber);
+      if (retBuff != null) {
+        readBufferMap.remove(currentReadSequenceNumber);
+      }
+      return retBuff;
+    }
   }
 
   /**
@@ -154,6 +215,7 @@ final class ProcessInformation implements IProcess {
         listener.stdout(this, buffer, bufferSize);
       }
     } catch(Throwable t) {
+      t.printStackTrace();
       notifyError(t);
     }
   }

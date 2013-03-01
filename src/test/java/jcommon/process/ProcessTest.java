@@ -24,6 +24,7 @@ import org.junit.Test;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
+import java.util.Date;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -37,8 +38,13 @@ public class ProcessTest {
   public void testLaunchProcess() throws Throwable {
     assertTrue(Resources.loadAllResources());
 
-    final int times = 10;
-    final int message_count = 100;
+//    for(int i = 45; i >= 0; --i) {
+//      System.err.println(i + "...");
+//      Thread.sleep(1000);
+//    }
+
+    final int times = 8;
+    final int message_count = 800;
     final AtomicInteger start_count = new AtomicInteger(0);
     final CountDownLatch stop_latch = new CountDownLatch(times);
 
@@ -96,13 +102,13 @@ public class ProcessTest {
 
           @Override
           protected void processStarted(IProcess process) throws Throwable {
-            //System.out.println("PID " + process.getPID() + " STARTED [" + Thread.currentThread().getName() + "]");
+            System.out.println("PID " + process.getPID() + " STARTED [" + Thread.currentThread().getName() + "] @ " + (new Date().getTime()));
             start_count.incrementAndGet();
           }
 
           @Override
           protected void processStopped(IProcess process, int exitCode) throws Throwable {
-            //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "]");
+            //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] @ " + (new Date().getTime()));
             //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
             boolean fail = message_count != counter.get();
             stop_latch.countDown();
@@ -113,6 +119,7 @@ public class ProcessTest {
           @Override
           protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
             final String text = Charset.defaultCharset().decode(buffer).toString();
+            //System.out.println("STDOUT @ " + (new Date().getTime()));
             //System.out.print("PID " + process.getPID() + " " + text);
             int idx = -1;
             while((idx = text.indexOf("P", idx + 1)) >= 0)
@@ -128,6 +135,8 @@ public class ProcessTest {
           }
         });
       final IProcess process = proc_builder.start();
+      //process.waitFor();
+      //Thread.sleep(2000);
       //assertTrue(process.waitFor(5, TimeUnit.SECONDS));
     }
 
