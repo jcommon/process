@@ -168,19 +168,22 @@ public class LAUNCH {
         iocp.postMessage(completion_key, STATE_STDOUT_READ);
         break;
       case STATE_DISCONNECT: //Close
+        if (!context.stdout.bufferMap.isEmpty()) {
+          iocp.postMessage(completion_key, STATE_STDOUT_READ_COMPLETED);
+          return;
+//          context.stdout.currentSequenceNumber--;
+//
+//          while((iocp_buffer = context.stdout.nextBuffer(null)) !=  null) {
+//            ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
+//            context.process_info.notifyStdOut(bb, iocp_buffer.bytesTransferred);
+//          }
+        }
+
         if (context.stdout.remainingIOs()) {
           iocp.postMessage(completion_key, STATE_DISCONNECT);
           return;
         }
 
-        if (!context.stdout.bufferMap.isEmpty()) {
-          context.stdout.currentSequenceNumber--;
-
-          while((iocp_buffer = context.stdout.nextBuffer(null)) !=  null) {
-            ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
-            context.process_info.notifyStdOut(bb, iocp_buffer.bytesTransferred);
-          }
-        }
 
         CloseHandle(context.process_info.stdin_child_process_write);
         CloseHandle(context.process_info.stderr_child_process_read);
