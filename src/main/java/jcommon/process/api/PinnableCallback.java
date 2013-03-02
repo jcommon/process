@@ -63,19 +63,20 @@ public class PinnableCallback<T extends Callback> {
     return callback;
   }
 
+  @SuppressWarnings("unchecked")
   public static <C extends Callback> C unpin(final C callback) {
     if (callback == null) {
       return null;
     }
 
-    final IPinListener listener;
+    final IPinListener<C> listener;
 
     synchronized (pin_lock) {
       pinned.remove(callback);
     }
 
     synchronized (listeners_lock) {
-      listener = listeners.remove(callback);
+      listener = (IPinListener<C>)listeners.remove(callback);
     }
 
     if (listener != null) {

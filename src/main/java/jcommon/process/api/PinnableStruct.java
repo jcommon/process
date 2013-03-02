@@ -34,8 +34,8 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
   private static final Object pin_lock = new Object();
   private static final Object listeners_lock = new Object();
 
-  public static interface IPinListener {
-    void unpinned(Pointer instance);
+  public static interface IPinListener<T extends Structure> {
+    void unpinned(T instance);
   }
 
   public void dispose() {
@@ -73,19 +73,24 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     return PinnableStruct.unpin(instance.getPointer());
   }
 
+  @SuppressWarnings("unchecked")
   public static <T extends Structure> T unpin(final Pointer ptr) {
+    if (null == ptr) {
+      return null;
+    }
+
     final T value;
     synchronized (pin_lock) {
       value = (T)pinned.remove(ptr);
     }
 
-    final IPinListener listener;
+    final IPinListener<T> listener;
     synchronized (listeners_lock) {
-      listener = listeners.remove(ptr);
+      listener = (IPinListener<T>)listeners.remove(ptr);
     }
 
     if (listener != null) {
-      listener.unpinned(ptr);
+      listener.unpinned(value);
       //If the listener returns false, then we do not
       //explicitly dispose of the memory -- the user will
       //need to take care of that himself.

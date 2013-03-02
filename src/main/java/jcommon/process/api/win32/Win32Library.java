@@ -27,6 +27,7 @@ import com.sun.jna.win32.W32APITypeMapper;
 import java.util.HashMap;
 import java.util.Map;
 
+@SuppressWarnings("unchecked")
 public interface Win32Library extends StdCallLibrary, Win32Errors {
   //<editor-fold defaultstate="collapsed" desc="Options">
   /** Standard options to use the unicode version of a w32 API. */

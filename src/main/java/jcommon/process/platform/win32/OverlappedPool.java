@@ -5,25 +5,25 @@ import jcommon.process.api.ObjectPool;
 import jcommon.process.api.PinnableStruct;
 
 final class OverlappedPool {
-  private final ObjectPool<Pointer> pool;
-  private final PinnableStruct.IPinListener pin_listener;
+  private final ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE> pool;
+  private final PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE> pin_listener;
 
   public OverlappedPool(int initialPoolSize) {
-    this.pin_listener = new PinnableStruct.IPinListener() {
+    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
       @Override
-      public void unpinned(Pointer instance) {
+      public void unpinned(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
         pool.returnToPool(instance);
       }
     };
 
-    this.pool = new ObjectPool<Pointer>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<Pointer>() {
+    this.pool = new ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE>(initialPoolSize, ObjectPool.INFINITE_POOL_SIZE, new ObjectPool.Allocator<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
       @Override
-      public Pointer allocateInstance() {
-        return PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE(), pin_listener).getPointer();
+      public OVERLAPPED_WITH_BUFFER_AND_STATE allocateInstance() {
+        return PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE(), pin_listener);
       }
 
       @Override
-      public void disposeInstance(Pointer instance) {
+      public void disposeInstance(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
       }
     });
   }
@@ -34,7 +34,7 @@ final class OverlappedPool {
 
   public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance() {
     //synchronized (pool.getLock()) {
-      return new OVERLAPPED_WITH_BUFFER_AND_STATE(pool.requestInstance());
+      return pool.requestInstance();
     //}
   }
 
@@ -44,7 +44,7 @@ final class OverlappedPool {
 
   public OVERLAPPED_WITH_BUFFER_AND_STATE requestInstance(final int state, final Pointer buffer, final int buffer_size) {
     //synchronized (pool.getLock()) {
-      final OVERLAPPED_WITH_BUFFER_AND_STATE instance = new OVERLAPPED_WITH_BUFFER_AND_STATE(pool.requestInstance());
+      final OVERLAPPED_WITH_BUFFER_AND_STATE instance = pool.requestInstance();
       instance.state = state;
 //      instance.iocpBuffer = new IOCPBUFFER();
 //      instance.iocpBuffer.buffer = buffer;

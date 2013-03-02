@@ -36,11 +36,11 @@
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
-      <module name="core" target="1.6" />
-      <module name="jcommon" target="1.6" />
       <module name="jcommon-process" target="1.6" />
-      <module name="process" target="1.6" />
     </bytecodeTargetLevel>
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_STRING" value="-Xlint:unchecked" />
   </component>
 </project>
 

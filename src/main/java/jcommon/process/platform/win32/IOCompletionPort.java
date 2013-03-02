@@ -53,7 +53,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   private final LinkedBlockingQueue<AssociationInformation<TAssociation>> release_queue = new LinkedBlockingQueue<AssociationInformation<TAssociation>>();
   private final Map<Pointer, AssociationInformation<TAssociation>> associations = new HashMap<Pointer, AssociationInformation<TAssociation>>(2);
 
-  private final IProcessor processor;
+  private final IProcessor<TAssociation> processor;
 
   public IOCompletionPort(final IProcessor<TAssociation> processor) {
     this.processor = processor;
@@ -130,7 +130,7 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
         io_completion_port_thread_pool_barrier_start.reset();
 //        io_completion_port_thread_pool_barrier_stop.reset();
         for(int i = 0; i < io_completion_port_thread_pool.length; ++i) {
-          final IOCompletionPortThreadInformation ti = new IOCompletionPortThreadInformation(this, i);
+          final IOCompletionPortThreadInformation<TAssociation> ti = new IOCompletionPortThreadInformation<TAssociation>(this, i);
           final Runnable r = new Runnable() { @Override
                                               public void run() {
             try {
