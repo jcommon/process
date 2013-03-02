@@ -40,6 +40,14 @@ public class IOCPBUFFER extends Structure {
     bytesTransferred += size;
   }
 
+  public boolean isMarkedAsEndOfStream() {
+    return (bytesTransferred == -1);
+  }
+
+  public void markAsEndOfStream() {
+    bytesTransferred = -1;
+  }
+
   public static class ByReference extends IOCPBUFFER implements Structure.ByReference {
     public ByReference() {
     }

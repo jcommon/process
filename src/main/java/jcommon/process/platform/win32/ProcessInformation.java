@@ -37,16 +37,6 @@ final class ProcessInformation implements IProcess {
   final CountDownLatch exit_latch = new CountDownLatch(1);
   final AtomicInteger exit_value = new AtomicInteger(0);
 
-  int readSequenceNumber = 0;
-  int currentReadSequenceNumber = 0;
-  final Map<Integer, IOCPBUFFER> readBufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
-  final Object readLock = new Object();
-
-  int writeSequenceNumber = 0;
-  int currentWriteSequenceNumber = 0;
-  final Map<Integer, IOCPBUFFER> writeBufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
-  final Object writeLock = new Object();
-
   public static interface ICreateProcessExitCallback {
     Win32.HANDLE createExitCallback(ProcessInformation process_info);
   }
@@ -65,18 +55,6 @@ final class ProcessInformation implements IProcess {
     this.environment_variables = environment_variables;
 
     this.process_exit_wait = callback != null ? callback.createExitCallback(this) : null;
-  }
-
-  public void incrementReadSequenceNumber() {
-    synchronized (readLock) {
-      readSequenceNumber = (currentReadSequenceNumber + 1) % MAX_SEQUENCE_NUMBER;
-    }
-  }
-
-  public void incrementWriteSequenceNumber() {
-    synchronized (writeLock) {
-      writeSequenceNumber = (currentWriteSequenceNumber + 1) % MAX_SEQUENCE_NUMBER;
-    }
   }
 
   /**

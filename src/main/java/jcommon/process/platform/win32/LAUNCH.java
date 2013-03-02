@@ -181,7 +181,7 @@ public class LAUNCH {
             iocp_buffer.bytesTransferred(bytesTransferred);
 
           while(!end_of_stream && (iocp_buffer = context.stdout.nextBuffer(iocp_buffer)) !=  null) {
-            gc();
+            //gc();
 
             end_of_stream = iocp_buffer.isMarkedAsEndOfStream();
 

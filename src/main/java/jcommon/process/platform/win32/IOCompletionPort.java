@@ -72,8 +72,6 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
   }
 
   private static class AssociationInformation<TAssociation extends Object> {
-    public static final AssociationInformation STOP_SENTINEL = new AssociationInformation(null, null);
-
     final Pointer completionKey;
     final TAssociation association;
 
