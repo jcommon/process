@@ -23,20 +23,18 @@ import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Extends {@link com.sun.jna.Memory} and allows you to pin ({@link #pin()}) memory by holding a reference to it until it is
  * unpinned ({@link #unpin()}).
  */
 public final class PinnableMemory extends Memory {
-  private static final Set<Pointer> pinned = new HashSet<Pointer>(2, 1.0f);
+  private static final Map<Pointer, PinnableMemory> pinned = new HashMap<Pointer, PinnableMemory>(2, 1.0f);
   private static final Map<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
   private static final Object pin_lock = new Object();
   private static final Object listeners_lock = new Object();
+  private boolean disposed = false;
 
   public static interface IPinListener {
     boolean unpinned(Pointer memory);
@@ -50,16 +48,30 @@ public final class PinnableMemory extends Memory {
    * Publicly-accessible form of {@link com.sun.jna.Memory#dispose()}.
    */
   public void dispose() {
-    super.dispose();
+    synchronized (this) {
+      if (disposed)
+        return;
+      disposed = true;
+
+      super.dispose();
+    }
+  }
+
+  @Override
+  protected void finalize() {
+    //Do NOT call super.dispose();
+    //We want to ensure that the semantics of our version is
+    //used and to insulate against any future changes.
+    dispose();
   }
 
   public PinnableMemory pin() {
-    return pin(null);
+    return this.pin(null);
   }
 
   public PinnableMemory pin(final IPinListener listener) {
     synchronized (pin_lock) {
-      pinned.add(this);
+      pinned.put(this, this);
     }
 
     synchronized (listeners_lock) {
@@ -102,9 +114,11 @@ public final class PinnableMemory extends Memory {
     return new PinnableMemory(size).pin(listener);
   }
 
-  public static void unpin(Pointer ptr) {
+  public static PinnableMemory unpin(Pointer ptr) {
+    final PinnableMemory mem;
+
     synchronized (pin_lock) {
-      pinned.remove(ptr);
+      mem = pinned.remove(ptr);
     }
 
     final IPinListener listener;
@@ -120,20 +134,19 @@ public final class PinnableMemory extends Memory {
       //If the listener returns false, then we do not
       //explicitly dispose of the memory -- the user will
       //need to take care of that himself.
-    } else {
-      if (ptr instanceof PinnableMemory)
-        ((PinnableMemory)ptr).dispose();
     }
+
+    return mem;
   }
 
   public static void dispose(Pointer ptr) {
     final PinnableMemory mem;
     synchronized (pin_lock) {
-      pinned.remove(ptr);
+      mem = pinned.remove(ptr);
     }
 
-    if (ptr instanceof PinnableMemory) {
-      ((PinnableMemory)ptr).dispose();
+    if (mem != null) {
+      mem.dispose();
     }
   }
 }

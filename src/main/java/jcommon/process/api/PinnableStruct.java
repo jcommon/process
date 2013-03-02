@@ -23,14 +23,14 @@ import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Map;
 
 /**
  *
  */
 public abstract class PinnableStruct<T extends Structure> extends Structure {
-  private static final HashSet<Pointer> pinned = new HashSet<Pointer>(2, 1.0f);
-  private static final HashMap<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
+  private static final Map<Pointer, Object> pinned = new HashMap<Pointer, Object>(2, 1.0f);
+  private static final Map<Pointer, IPinListener> listeners = new HashMap<Pointer, IPinListener>(2, 1.0f);
   private static final Object pin_lock = new Object();
   private static final Object listeners_lock = new Object();
 
@@ -55,7 +55,7 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     final Pointer ptr = instance.getPointer();
 
     synchronized (pin_lock) {
-      pinned.add(ptr);
+      pinned.put(ptr, instance);
     }
 
     synchronized (listeners_lock) {
@@ -67,32 +67,16 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
     return instance;
   }
 
-  public static Pointer pin(final Pointer ptr) {
-    return pin(ptr, null);
+  public static <T extends Structure> T unpin(final T instance) {
+    if (instance == null)
+      return null;
+    return PinnableStruct.unpin(instance.getPointer());
   }
 
-  public static Pointer pin(final Pointer ptr, final IPinListener listener) {
-
+  public static <T extends Structure> T unpin(final Pointer ptr) {
+    final T value;
     synchronized (pin_lock) {
-      pinned.add(ptr);
-    }
-
-    synchronized (listeners_lock) {
-      if (listener != null) {
-        listeners.put(ptr, listener);
-      }
-    }
-
-    return ptr;
-  }
-
-  public static <T extends Structure> void unpin(final T instance) {
-    PinnableStruct.unpin(instance.getPointer());
-  }
-
-  public static void unpin(final Pointer ptr) {
-    synchronized (pin_lock) {
-      pinned.remove(ptr);
+      value = (T)pinned.remove(ptr);
     }
 
     final IPinListener listener;
@@ -106,5 +90,7 @@ public abstract class PinnableStruct<T extends Structure> extends Structure {
       //explicitly dispose of the memory -- the user will
       //need to take care of that himself.
     }
+
+    return value;
   }
 }

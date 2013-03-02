@@ -43,8 +43,8 @@ public class ProcessTest {
 //      Thread.sleep(1000);
 //    }
 
-    final int times = 8;
-    final int message_count = 800;
+    final int times = 100;
+    final int message_count = 10;
     final AtomicInteger start_count = new AtomicInteger(0);
     final CountDownLatch stop_latch = new CountDownLatch(times);
 
@@ -109,7 +109,7 @@ public class ProcessTest {
           @Override
           protected void processStopped(IProcess process, int exitCode) throws Throwable {
             //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] @ " + (new Date().getTime()));
-            //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
+            System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
             boolean fail = message_count != counter.get();
             stop_latch.countDown();
             if (fail)

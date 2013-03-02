@@ -79,38 +79,6 @@ final class ProcessInformation implements IProcess {
     }
   }
 
-  public IOCPBUFFER nextReadBuffer() {
-    return nextReadBuffer(null);
-  }
-
-  public IOCPBUFFER nextReadBuffer(IOCPBUFFER iocpBuffer) {
-    synchronized (readLock) {
-      IOCPBUFFER retBuff;
-
-      if (iocpBuffer != null) {
-        int buffer_sequence_number = iocpBuffer.sequenceNumber;
-        if (buffer_sequence_number == currentReadSequenceNumber) {
-          return iocpBuffer;
-        }
-
-        retBuff = readBufferMap.get(buffer_sequence_number);
-        if (retBuff != null) {
-          //Duplicate key -- probably not good!
-          return null;
-        }
-
-        //Add to map.
-        readBufferMap.put(buffer_sequence_number, iocpBuffer);
-      }
-
-      retBuff = readBufferMap.get(currentReadSequenceNumber);
-      if (retBuff != null) {
-        readBufferMap.remove(currentReadSequenceNumber);
-      }
-      return retBuff;
-    }
-  }
-
   /**
    * @see IProcess#isParentEnvironmentInherited()
    */
@@ -215,7 +183,7 @@ final class ProcessInformation implements IProcess {
         listener.stdout(this, buffer, bufferSize);
       }
     } catch(Throwable t) {
-      t.printStackTrace();
+      //t.printStackTrace();
       notifyError(t);
     }
   }

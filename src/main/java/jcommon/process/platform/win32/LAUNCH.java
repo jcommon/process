@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static jcommon.process.api.win32.Kernel32.*;
 import static jcommon.process.api.win32.Win32.*;
@@ -45,17 +46,31 @@ public class LAUNCH {
         MAX_SEQUENCE_NUMBER = 5001
     ;
 
-    public int sequenceNumber = 0;
-    public int currentSequenceNumber = 0;
-    public final Map<Integer, IOCPBUFFER> bufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
     public final Object lock = new Object();
-    public int outstandingIOs = 0;
-    public int currentSequenceMarker = 1;
+    private final Map<Integer, IOCPBUFFER> bufferMap = new HashMap<Integer, IOCPBUFFER>(10, 1.0f);
+    private int outstandingIOs = 0;
+    private boolean closing = false;
+    private boolean closed = false;
+    private int currentSequenceNumber = 1;
+    private int currentSequenceMarker = 1;
+
+    public boolean isClosed() {
+      return closed;
+    }
+
+    public int sequenceNumber() {
+      return currentSequenceNumber;
+    }
 
     public int incrementSequenceNumber() {
-      synchronized (lock) {
-        return (currentSequenceNumber = (currentSequenceNumber + 1) % MAX_SEQUENCE_NUMBER);
-      }
+      return (currentSequenceNumber = (currentSequenceNumber + 1) % MAX_SEQUENCE_NUMBER);
+    }
+
+    public int decrementSequenceNumber() {
+      if (currentSequenceNumber != 1)
+        return (currentSequenceNumber = (currentSequenceNumber - 1) % MAX_SEQUENCE_NUMBER);
+      else
+        return (currentSequenceNumber = MAX_SEQUENCE_NUMBER);
     }
 
     private int incrementMarker() {
@@ -67,43 +82,51 @@ public class LAUNCH {
     }
 
     public IOCPBUFFER nextBuffer(IOCPBUFFER iocpBuffer) {
-      synchronized (lock) {
-        IOCPBUFFER retBuff;
+      //if (closed) {
+      //  return createEndOfStreamMarker();
+      //}
 
-        if (iocpBuffer != null) {
-          int buffer_sequence_number = iocpBuffer.sequenceNumber;
-          if (buffer_sequence_number == currentSequenceMarker) {
-            incrementMarker();
-            return iocpBuffer;
-          }
+      IOCPBUFFER retBuff;
 
-          //Add to map.
-          bufferMap.put(buffer_sequence_number, iocpBuffer);
+      if (iocpBuffer != null) {
+        incrementSequenceNumber();
+
+        int buffer_sequence_number = iocpBuffer.sequenceNumber;
+        if (buffer_sequence_number == currentSequenceMarker) {
+          incrementMarker();
+          return iocpBuffer;
         }
 
-        retBuff = bufferMap.remove(currentSequenceMarker);
-        if (retBuff != null)
-          incrementMarker();
-        return retBuff;
+        //Add to map.
+        bufferMap.put(buffer_sequence_number, iocpBuffer);
       }
+
+      retBuff = bufferMap.remove(currentSequenceMarker);
+      if (retBuff != null) {
+        incrementMarker();
+        if (retBuff.isMarkedAsEndOfStream()) {
+          closed = true;
+        }
+      }
+      return retBuff;
     }
 
-    public void incrementOutstandingIO() {
-      synchronized (lock) {
-        ++outstandingIOs;
-      }
+    private IOCPBUFFER createEndOfStreamMarker() {
+      final IOCPBUFFER buff = new IOCPBUFFER();
+      buff.buffer = null;
+      buff.bufferSize = 0;
+      buff.sequenceNumber = incrementSequenceNumber();
+      buff.markAsEndOfStream();
+      return buff;
     }
 
-    public void decrementOutstandingIO() {
-      synchronized (lock) {
-        --outstandingIOs;
-      }
-    }
+    public void endOfStream() {
+      //Append a special marker buffer to the end of the stream.
+      closing = true;
 
-    public boolean remainingIOs() {
-      synchronized (lock) {
-        return outstandingIOs > 0;
-      }
+      final IOCPBUFFER buff = createEndOfStreamMarker();
+      bufferMap.put(buff.sequenceNumber, buff);
+      incrementMarker();
     }
   }
 
@@ -112,6 +135,7 @@ public class LAUNCH {
     public final Sequencing stdout = new Sequencing();
     public final Sequencing stderr = new Sequencing();
     public final Sequencing stdin = new Sequencing();
+    public final AtomicBoolean closed = new AtomicBoolean(false);
 
     public Context(ProcessInformation process_info) {
       this.process_info = process_info;
@@ -128,62 +152,68 @@ public class LAUNCH {
   private static void completion_thread(final int state, final int bytesTransferred, final OVERLAPPED_WITH_BUFFER_AND_STATE ovl, final Context context, final Pointer completion_key, final Pointer ptr_overlapped, final IntByReference ptr_bytes_transferred, final Object overlapped_pool, final Object memory_pool, final IOCompletionPort<Context> iocp) throws Throwable {
     int err;
     IOCPBUFFER iocp_buffer;
+    boolean end_of_stream = false;
 
     switch(state) {
       case STATE_CONNECTED:
         //Connected
-        read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+        context.process_info.notifyStarted();
+
+        synchronized (context.stdout) {
+          read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+        }
 
         ResumeThread(context.process_info.main_thread);
         CloseHandle(context.process_info.main_thread);
         break;
+
       case STATE_STDOUT_READ:
-        read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+        synchronized (context.stdout) {
+          read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+        }
         break;
+
       case STATE_STDOUT_READ_COMPLETED:
-        //GetOverlappedResult(context.process_info.stdout_child_process_read, ptr_overlapped, ptr_bytes_transferred, false);
-        //System.out.println("bytes: " + bytesTransferred);
+        synchronized (context.stdout) {
+          iocp_buffer = PinnableStruct.unpin(ovl.iocpBuffer);
 
-        iocp_buffer = ovl.iocpBuffer;
-        if (iocp_buffer != null)
-          iocp_buffer.bytesTransferred(bytesTransferred);
+          if (iocp_buffer != null)
+            iocp_buffer.bytesTransferred(bytesTransferred);
 
-        while((iocp_buffer = context.stdout.nextBuffer(iocp_buffer)) !=  null) {
-          gc();
-          ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
-          context.process_info.notifyStdOut(bb, iocp_buffer.bytesTransferred);
+          while(!end_of_stream && (iocp_buffer = context.stdout.nextBuffer(iocp_buffer)) !=  null) {
+            gc();
 
-          PinnableStruct.unpin(iocp_buffer);
-          PinnableMemory.unpin(iocp_buffer.buffer);
+            end_of_stream = iocp_buffer.isMarkedAsEndOfStream();
 
-          //iocp_buffer.free();
-          iocp_buffer = null;
+            if (!end_of_stream) {
+              ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
+              context.process_info.notifyStdOut(bb, iocp_buffer.bytesTransferred);
+            }
+
+            PinnableMemory.dispose(iocp_buffer.buffer);
+
+            iocp_buffer = null;
+          }
+
+          if (!end_of_stream) {
+            //read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+            iocp.postMessage(completion_key, STATE_STDOUT_READ);
+          } else {
+            iocp.postMessage(completion_key, STATE_DISCONNECT);
+          }
         }
-
-        PinnableStruct.unpin(ptr_overlapped);
-
-
-        context.stdout.decrementOutstandingIO();
-        //read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
-        iocp.postMessage(completion_key, STATE_STDOUT_READ);
         break;
+
       case STATE_DISCONNECT: //Close
-        if (!context.stdout.bufferMap.isEmpty()) {
-          iocp.postMessage(completion_key, STATE_STDOUT_READ_COMPLETED);
-          return;
-//          context.stdout.currentSequenceNumber--;
-//
-//          while((iocp_buffer = context.stdout.nextBuffer(null)) !=  null) {
-//            ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
-//            context.process_info.notifyStdOut(bb, iocp_buffer.bytesTransferred);
-//          }
+        synchronized (context.stdout) {
+          if (!context.stdout.isClosed()) {
+            iocp.postMessage(completion_key, STATE_STDOUT_READ);
+            return;
+          }
         }
 
-        if (context.stdout.remainingIOs()) {
-          iocp.postMessage(completion_key, STATE_DISCONNECT);
+        if (!context.closed.compareAndSet(false, true))
           return;
-        }
-
 
         CloseHandle(context.process_info.stdin_child_process_write);
         CloseHandle(context.process_info.stderr_child_process_read);
@@ -207,7 +237,6 @@ public class LAUNCH {
         PinnableObject.unpin(context);
 
         context.process_info.exit_latch.countDown();
-        //System.out.println("CLOSING");
         break;
     }
   }
@@ -425,38 +454,40 @@ public class LAUNCH {
     return process_info;
   }
 
-  private static boolean read(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int op) {
+  private static boolean read(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state) {
 //      final OVERLAPPED_WITH_BUFFER_AND_STATE o = overlapped_pool.requestInstance(
 //        op,
 //        memory_pool.requestSlice(),
 //        memory_pool.getSliceSize()
 //      );
-    //final IOCPBUFFER iocpBuffer = new IOCPBUFFER();
+
     final OVERLAPPED_WITH_BUFFER_AND_STATE o = PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE());
     final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference());
-    //o.ovl = new OVERLAPPED();
-    o.state = op;
+    o.state = state;
     o.iocpBuffer = io;
     io.buffer = PinnableMemory.pin(1024);
     io.bufferSize = 1024;
-    io.sequenceNumber = sequencing.incrementSequenceNumber();
+    io.sequenceNumber = sequencing.sequenceNumber();
 
     if (!ReadFile(pipe, io.buffer, io.bufferSize, null, o) /*|| lp_bytes_read.getValue() == 0*/) {
       int err = Native.getLastError();
       switch(err) {
         case ERROR_IO_PENDING:
           //Normal operation. Nothing to see here.
-          sequencing.incrementOutstandingIO();
           return true;
       }
 
-      PinnableStruct.unpin(o);
-      PinnableStruct.unpin(io);
       PinnableMemory.dispose(io.buffer);
+      PinnableStruct.unpin(io);
+      PinnableStruct.unpin(o);
 
       switch(err) {
         case ERROR_BROKEN_PIPE:
-          iocp.postMessage(completion_key, STATE_DISCONNECT);
+          //Append a special message indicating that we've reached
+          //the end of the stream. Outstanding reads will then drain
+          //off until we reach this message.
+          sequencing.endOfStream();
+          iocp.postMessage(completion_key, state);
           break;
       }
     }

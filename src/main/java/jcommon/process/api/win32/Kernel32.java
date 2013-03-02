@@ -442,15 +442,14 @@ public class Kernel32 implements Win32Library {
     public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessW(lpApplicationName == null ? null : new WString(lpApplicationName), lpCommandLine != null ? new WString(lpCommandLine) : null, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
   }
 
-  public static class Offset extends Union {
-    public DWORD Offset;
-    public DWORD OffsetHigh;
-  }
+
+
+
 
   public static class OVERLAPPED extends Structure {
     public ULONG_PTR Internal;
     public ULONG_PTR InternalHigh;
-    public Offset Offset;
+    public OVERLAPPEDUNION Offset;
     public HANDLE hEvent;
 
     private static final List FIELD_ORDER = fromSeq(
@@ -472,6 +471,35 @@ public class Kernel32 implements Win32Library {
     @Override
     protected List getFieldOrder() {
       return FIELD_ORDER;
+    }
+
+    public static class OVERLAPPEDUNION extends Union {
+      public OVERLAPPEDOFFSET Offset;
+      public Pointer Pointer;
+
+      public static class OVERLAPPEDOFFSET extends Structure {
+        public DWORD Offset;
+        public DWORD OffsetHigh;
+
+        private static final List FIELD_ORDER = fromSeq(
+            "Offset"
+          , "OffsetHigh"
+        );
+
+        public OVERLAPPEDOFFSET() {
+          super();
+        }
+
+        public OVERLAPPEDOFFSET(Pointer memory) {
+          super(memory);
+          read();
+        }
+
+        @Override
+        protected List getFieldOrder() {
+          return FIELD_ORDER;
+        }
+      }
     }
   }
 

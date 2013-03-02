@@ -9,7 +9,7 @@ public final class Utils {
   private static final AtomicInteger overlapped_pipe_serial_number = new AtomicInteger(0);
 
   public static void gc() {
-    for(int i = 0; i < 15; ++i) {
+    for(int i = 0; i <= 5; ++i) {
       System.gc();
     }
   }
