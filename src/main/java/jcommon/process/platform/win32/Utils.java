@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static jcommon.process.api.win32.Win32.*;
 import static jcommon.process.api.win32.Kernel32.*;
 
-public final class Utils {
+final class Utils {
   private static final AtomicInteger overlapped_pipe_serial_number = new AtomicInteger(0);
 
   public static void gc() {
@@ -137,7 +137,7 @@ public final class Utils {
   }
 
   public static String formulateSanitizedCommandLine(final String...args) {
-    if (args == null || args.length <= 1 || "".equals(args[0])) {
+    if (args == null || args.length < 1 || "".equals(args[0])) {
       throw new IllegalArgumentException("args cannot be null or empty and provide at least the executable as the first argument.");
     }
 

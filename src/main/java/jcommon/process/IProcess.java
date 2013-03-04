@@ -163,4 +163,13 @@ public interface IProcess {
   boolean println(CharSequence seq);
   boolean print(Charset charset, CharSequence seq);
   boolean println(Charset charset, CharSequence seq);
+
+  boolean write(byte b[], Object attachment);
+  boolean write(byte b[], int off, int len, Object attachment);
+  boolean write(ByteBuffer bb, Object attachment);
+  boolean println(Object attachment);
+  boolean print(CharSequence seq, Object attachment);
+  boolean println(CharSequence seq, Object attachment);
+  boolean print(Charset charset, CharSequence seq, Object attachment);
+  boolean println(Charset charset, CharSequence seq, Object attachment);
 }

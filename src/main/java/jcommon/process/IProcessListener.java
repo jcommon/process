@@ -23,10 +23,10 @@ import java.nio.ByteBuffer;
 
 /**
  */
-public interface IProcessListener {
+public interface IProcessListener<TAttachment extends Object> {
   void started(final IProcess process) throws Throwable;
   void stopped(final IProcess process, final int exitCode) throws Throwable;
-  void stdin(final IProcess process, final ByteBuffer buffer, final int bytesWritten) throws Throwable;
+  void stdin(final IProcess process, final ByteBuffer buffer, final int bytesWritten, final TAttachment attachment) throws Throwable;
   void stdout(final IProcess process, final ByteBuffer buffer, final int bytesRead) throws Throwable;
   void stderr(final IProcess process, final ByteBuffer buffer, final int bytesRead) throws Throwable;
   void error(final IProcess process, final Throwable t);

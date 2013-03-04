@@ -48,7 +48,7 @@ final class ProcessInformation implements IProcess {
   final IWriteCallback write_callback;
 
   public static interface IWriteCallback {
-    boolean write(ByteBuffer bb);
+    boolean write(ByteBuffer bb, Object attachment);
   }
 
   public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners, final IWriteCallback write_callback) {
@@ -182,7 +182,47 @@ final class ProcessInformation implements IProcess {
 
   @Override
   public boolean write(ByteBuffer bb) {
-    return write_callback.write(bb);
+    return write_callback.write(bb, null);
+  }
+
+  @Override
+  public boolean write(byte b[], Object attachment) {
+    return write(b, 0, b.length, attachment);
+  }
+
+  @Override
+  public boolean write(byte b[], int off, int len, Object attachment) {
+    return write(ByteBuffer.wrap(b, off, len), attachment);
+  }
+
+  @Override
+  public boolean println(Object attachment) {
+    return println(StringUtil.empty, attachment);
+  }
+
+  @Override
+  public boolean print(CharSequence seq, Object attachment) {
+    return print(Charset.defaultCharset(), seq, attachment);
+  }
+
+  @Override
+  public boolean println(CharSequence seq, Object attachment) {
+    return println(Charset.defaultCharset(), seq, attachment);
+  }
+
+  @Override
+  public boolean print(Charset charset, CharSequence seq, Object attachment) {
+    return write(charset.encode(seq.toString()), attachment);
+  }
+
+  @Override
+  public boolean println(Charset charset, CharSequence seq, Object attachment) {
+    return write(charset.encode(seq.toString() + NEW_LINE), attachment);
+  }
+
+  @Override
+  public boolean write(ByteBuffer bb, Object attachment) {
+    return write_callback.write(bb, attachment);
   }
 
   public void notifyStarted() {
@@ -205,10 +245,10 @@ final class ProcessInformation implements IProcess {
     }
   }
 
-  public void notifyStdIn(final ByteBuffer buffer, final int bytesWritten) {
+  public void notifyStdIn(final ByteBuffer buffer, final int bytesWritten, final Object attachment) {
     try {
       for(IProcessListener listener : listeners) {
-        listener.stdin(this, buffer, bytesWritten);
+        listener.stdin(this, buffer, bytesWritten, attachment);
       }
     } catch(Throwable t) {
       //t.printStackTrace();

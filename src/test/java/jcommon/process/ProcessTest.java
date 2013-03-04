@@ -35,12 +35,11 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
-  final int times = 1;
+  final int times = 2;
   final int message_count = 10;
 
   final ProcessBuilder builder_stdin_1 = ProcessBuilder.create()
     .withExecutable(Resources.STDIN_1)
-      .andArgument(Integer.toString(message_count))
       .withListener(
           StandardStreamPipe.create()
           //.redirectStdOut(StandardStream.Null)
@@ -112,31 +111,74 @@ public class ProcessTest {
     assertTrue(Resources.loadAllResources());
   }
 
+  private static int countNewLines(ByteBuffer buffer) {
+    final String text = Charset.defaultCharset().decode(buffer).toString();
+    //System.err.print("PID " + process.getPID() + " " + text);
+    int idx = -1;
+    int counter = 0;
+    while((idx = text.indexOf("\n", idx + 1)) >= 0)
+      ++counter;
+    return counter;
+  }
+
   @Test
   public void testStdIn() throws Throwable {
+    //Test processes in succession.
+
     for(int time = 0; time < times; ++time) {
+      final String p_time = "P:" + (time + 1);
+      final AtomicInteger stdin_count = new AtomicInteger(0);
+      final AtomicInteger stdout_count = new AtomicInteger(0);
+
       final ProcessBuilder proc_builder = builder_stdin_1.copy()
-        .addArguments("P:" + (time + 1))
-        .addListener(new ProcessListener() {
+        .addListener(new ProcessListener<Integer>() {
           @Override
-          protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
-            final String written_message = Charset.defaultCharset().decode(buffer).toString();
-            System.err.println("PROCESS PID " + process.getPID() + " WROTE " + bytesWritten + " bytes(s): " + written_message);
+          protected void processStarted(IProcess process) throws Throwable {
+            //This message should come before the one written in the main thread.
+            process.println("M:0 " + p_time);
+          }
+
+          @Override
+          protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize, Integer attachment) throws Throwable {
+            //final String written_message = Charset.defaultCharset().decode(buffer).toString();
+            //System.err.println("\nPROCESS PID " + process.getPID() + " WROTE " + bytesWritten + " bytes(s): " + written_message);
+            stdin_count.addAndGet(countNewLines(buffer));
+
+            if (attachment <= message_count) {
+              //Write another message from within the callback.
+              assertTrue(process.println("M:" + attachment + " " + p_time, attachment + 1));
+            } else {
+              //An empty line will ask the test child process to exit.
+              assertTrue(process.println());
+            }
           }
 
           @Override
           protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
+            stdout_count.addAndGet(countNewLines(buffer));
           }
         })
       ;
       final IProcess proc = proc_builder.start();
-      proc.println("HELLO WORLD!");
-      proc.println();
-      proc.await();
+
+      //Write a message from the main thread.
+      assertTrue(proc.println("M:1 " + p_time, 2));
+      assertTrue(proc.await(10, TimeUnit.SECONDS));
+
+      assertEquals(message_count + 2, stdin_count.get());
+      assertEquals(message_count + 1, stdout_count.get());
+
+      //Expected output:
+      //M:0
+      //M:1
+      //M:2
+      //M:3
+      //M:4
+      //M:5
     }
   }
 
-  //@Test
+  @Test
   public void testLaunchProcess() throws Throwable {
 //    for(int i = 45; i >= 0; --i) {
 //      System.err.println(i + "...");

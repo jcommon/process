@@ -137,7 +137,7 @@ public class Win32ProcessLauncherIOCP {
     public final Sequencing stdout = new Sequencing();
     public final Sequencing stderr = new Sequencing();
     public final Sequencing stdin = new Sequencing(0, 1);
-    public final Deque<ByteBuffer> pending_start_writes = new LinkedList<ByteBuffer>();
+    public final Deque<Tag> pending_start_writes = new LinkedList<Tag>();
     public final AtomicBoolean started = new AtomicBoolean(false);
     public final AtomicBoolean closed = new AtomicBoolean(false);
     public final Pointer completion_key;
@@ -160,10 +160,10 @@ public class Win32ProcessLauncherIOCP {
     }
 
     @Override
-    public boolean write(ByteBuffer bb) {
+    public boolean write(ByteBuffer bb, Object attachment) {
       synchronized (stdin) {
         if (!started.get()) {
-          pending_start_writes.offer(bb);
+          pending_start_writes.offer(new Tag(bb, attachment));
           return true;
         }
 
@@ -171,7 +171,7 @@ public class Win32ProcessLauncherIOCP {
           return false;
         }
 
-        return Win32ProcessLauncherIOCP.write(iocp, this, stdin, completion_key, iocp.getOverlappedPool(), iocp.getMemoryPool(), process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, bb);
+        return Win32ProcessLauncherIOCP.write(iocp, this, stdin, completion_key, iocp.getOverlappedPool(), iocp.getMemoryPool(), process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, new Tag(bb, attachment));
       }
     }
   }
@@ -184,8 +184,8 @@ public class Win32ProcessLauncherIOCP {
   });
 
   private static void completion_thread(final int state, final int bytesTransferred, final OVERLAPPED_WITH_BUFFER_AND_STATE ovl, final Context context, final Pointer completion_key, final Pointer ptr_overlapped, final IntByReference ptr_bytes_transferred, final Object overlapped_pool, final Object memory_pool, final IOCompletionPort<Context> iocp) throws Throwable {
+    Tag tag;
     IOCPBUFFER iocp_buffer;
-    ByteBuffer buffer_written;
     boolean end_of_stream = false;
 
     switch(state) {
@@ -215,9 +215,9 @@ public class Win32ProcessLauncherIOCP {
           //stdin and emptying its buffer. So our pending writes need to happen after we've started up.
           //This means that all writes done during notifyStarted() will be pending until this point.
           if (context.started.compareAndSet(false, true)) {
-            ByteBuffer bb;
-            while((bb = context.pending_start_writes.poll()) != null) {
-              write(iocp, context, context.stdin, completion_key, overlapped_pool, memory_pool, context.process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, bb);
+            Tag t;
+            while((t = context.pending_start_writes.poll()) != null) {
+              write(iocp, context, context.stdin, completion_key, overlapped_pool, memory_pool, context.process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, t);
             }
           }
         }
@@ -313,13 +313,13 @@ public class Win32ProcessLauncherIOCP {
           while(!end_of_stream && (iocp_buffer = context.stdin.nextBuffer(iocp_buffer, false)) !=  null) {
             //gc();
 
-            buffer_written = PinnableStruct.untag(iocp_buffer);
+            tag = PinnableStruct.untag(iocp_buffer);
             PinnableStruct.unpin(iocp_buffer);
 
             end_of_stream = iocp_buffer.isMarkedAsEndOfStream();
 
             if (!end_of_stream) {
-              context.process_info.notifyStdIn(buffer_written, iocp_buffer.bytesTransferred);
+              context.process_info.notifyStdIn(tag.buffer, iocp_buffer.bytesTransferred, tag.attachment);
             }
 
             PinnableMemory.dispose(iocp_buffer.buffer);
@@ -619,18 +619,18 @@ public class Win32ProcessLauncherIOCP {
     return false;
   }
 
-  private static boolean write(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state, final ByteBuffer bb) {
+  private static boolean write(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state, final Tag t) {
     //memory from bytebuffer
 
     final OVERLAPPED_WITH_BUFFER_AND_STATE o = PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE());
-    final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference(), bb);
+    final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference(), t);
     o.state = state;
     o.iocpBuffer = io;
     io.buffer = null;
     io.bufferSize = 0;
     io.sequenceNumber = sequencing.incrementSequenceNumber();
 
-    if (!WriteFile(pipe, bb, bb.remaining(), null, o)) {
+    if (!WriteFile(pipe, t.buffer, t.buffer.remaining(), null, o)) {
       int err = Native.getLastError();
       switch(err) {
         case ERROR_IO_PENDING:

@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  */
-public abstract class ProcessListener implements IProcessListener {
+public abstract class ProcessListener<TAttachment extends Object> implements IProcessListener<TAttachment> {
   private static ByteArrayPool buffer_pool = null;
   private static final Object buffer_pool_lock = new Object();
   private static final AtomicInteger running = new AtomicInteger(0);
@@ -74,10 +74,10 @@ public abstract class ProcessListener implements IProcessListener {
   }
 
   @Override
-  public final void stdin(IProcess process, ByteBuffer buffer, int bytesWritten) throws Throwable {
+  public final void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, TAttachment attachment) throws Throwable {
     final ByteArrayPool.Buffer pool_buffer = buffer_pool.requestInstance();
     try {
-      stdin(process, buffer, bytesWritten, pool_buffer.getBuffer(), pool_buffer.getBufferSize());
+      stdin(process, buffer, bytesWritten, pool_buffer.getBuffer(), pool_buffer.getBufferSize(), attachment);
     } finally {
       buffer_pool.returnToPool(pool_buffer);
     }
@@ -114,7 +114,7 @@ public abstract class ProcessListener implements IProcessListener {
 
   protected void processStarted(IProcess process) throws Throwable { }
   protected void processStopped(IProcess process, int exitCode) throws Throwable { }
-  protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
+  protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize, TAttachment attachment) throws Throwable { }
   protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void stderr(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void processError(IProcess process, Throwable t) { }
