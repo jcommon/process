@@ -6,12 +6,12 @@ import jcommon.process.api.PinnableStruct;
 
 final class OverlappedPool {
   private final ObjectPool<OVERLAPPED_WITH_BUFFER_AND_STATE> pool;
-  private final PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE> pin_listener;
+  private final PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE, Object> pin_listener;
 
   public OverlappedPool(int initialPoolSize) {
-    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE>() {
+    this.pin_listener = new PinnableStruct.IPinListener<OVERLAPPED_WITH_BUFFER_AND_STATE, Object>() {
       @Override
-      public void unpinned(OVERLAPPED_WITH_BUFFER_AND_STATE instance) {
+      public void unpinned(OVERLAPPED_WITH_BUFFER_AND_STATE instance, Object tag) {
         pool.returnToPool(instance);
       }
     };
