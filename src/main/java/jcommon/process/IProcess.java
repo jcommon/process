@@ -19,6 +19,7 @@
 
 package jcommon.process;
 
+import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -152,4 +153,8 @@ public interface IProcess {
    * @see #await(long, java.util.concurrent.TimeUnit)
    */
   boolean waitFor(long timeout, TimeUnit unit);
+
+  boolean write(byte b[]);
+  boolean write(byte b[], int off, int len);
+  boolean write(ByteBuffer bb);
 }

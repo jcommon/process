@@ -19,6 +19,7 @@
 
 package jcommon.process;
 
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
@@ -34,38 +35,31 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
-  @Test
-  public void testLaunchProcess() throws Throwable {
-    assertTrue(Resources.loadAllResources());
+  final int times = 32;
+  final int message_count = 1000;
 
-//    for(int i = 45; i >= 0; --i) {
-//      System.err.println(i + "...");
-//      Thread.sleep(1000);
-//    }
-
-    final int times = 100;
-    final int message_count = 10;
-    final AtomicInteger start_count = new AtomicInteger(0);
-    final CountDownLatch stop_latch = new CountDownLatch(times);
-
-    //p.launch("cmd.exe", "/c", "echo", "%PATH%");
-    //p.launch(Resources.STDOUT_1, "how", "are", "you");
-
-    //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "4000", "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1));
-    //p.launch(Resources.STDOUT_1, "how", "are", "you");
-
-    final ProcessBuilder builder_stdout_1 = ProcessBuilder.create()
-      .withExecutable(Resources.STDOUT_1)
+  final ProcessBuilder builder_stdin_1 = ProcessBuilder.create()
+    .withExecutable(Resources.STDIN_1)
       .andArgument(Integer.toString(message_count))
       .withListener(
           StandardStreamPipe.create()
           //.redirectStdOut(StandardStream.Null)
           //.redirectStdErr(StandardStream.Null)
       )
-    ;
+  ;
 
-    final ProcessBuilder builder_stdout_echo_repeat = ProcessBuilder.create()
-      .withExecutable("cmd.exe")
+  final ProcessBuilder builder_stdout_1 = ProcessBuilder.create()
+    .withExecutable(Resources.STDOUT_1)
+      .andArgument(Integer.toString(message_count))
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
+
+  final ProcessBuilder builder_stdout_echo_repeat = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
       .andArgument("/c")
       .andArgument(Resources.STDOUT_ECHO_REPEAT)
       .andArgument(Integer.toString(message_count))
@@ -74,10 +68,34 @@ public class ProcessTest {
           //.redirectStdOut(StandardStream.Null)
           //.redirectStdErr(StandardStream.Null)
       )
-    ;
+  ;
 
-    final ProcessBuilder builder_server = ProcessBuilder.create()
-      .withExecutable("cmd.exe")
+  final ProcessBuilder builder_stderr_echo_repeat = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
+      .andArgument("/c")
+      .andArgument(Resources.STDERR_ECHO_REPEAT)
+      .andArgument(Integer.toString(message_count))
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
+
+  final ProcessBuilder builder_stdout_stderr_echo_repeat = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
+      .andArgument("/c")
+      .andArgument(Resources.STDOUT_STDERR_ECHO_REPEAT)
+      .andArgument(Integer.toString(message_count))
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
+
+  final ProcessBuilder builder_server = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
       .andArgument("/c")
       .andArgument("C:\\gitmo\\websphere-8.5.0\\bin\\server.bat")
       .andArgument("start")
@@ -87,7 +105,37 @@ public class ProcessTest {
           //.redirectStdOut(StandardStream.Null)
           //.redirectStdErr(StandardStream.Null)
       )
-    ;
+  ;
+
+  @BeforeClass
+  public static void before() {
+    assertTrue(Resources.loadAllResources());
+  }
+
+  @Test
+  public void testStdIn() throws Throwable {
+    for(int time = 0; time < times; ++time) {
+      final ProcessBuilder proc_builder = builder_stdin_1.copy()
+        .addArguments("P:" + (time + 1));
+    }
+  }
+
+  @Test
+  public void testLaunchProcess() throws Throwable {
+//    for(int i = 45; i >= 0; --i) {
+//      System.err.println(i + "...");
+//      Thread.sleep(1000);
+//    }
+
+
+    final AtomicInteger start_count = new AtomicInteger(0);
+    final CountDownLatch stop_latch = new CountDownLatch(times);
+
+    //p.launch("cmd.exe", "/c", "echo", "%PATH%");
+    //p.launch(Resources.STDOUT_1, "how", "are", "you");
+
+    //p.launch("cmd.exe", "/c", Resources.STDOUT_ECHO_REPEAT, "4000", "an extremely long line should go here, wouldn't you say? and the number is: " + (i + 1));
+    //p.launch(Resources.STDOUT_1, "how", "are", "you");
 
     for(int time = 0; time < times; ++time) {
       final ProcessBuilder proc_builder = builder_stdout_echo_repeat.copy()
@@ -110,7 +158,7 @@ public class ProcessTest {
           protected void processStopped(IProcess process, int exitCode) throws Throwable {
             //System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] @ " + (new Date().getTime()));
             System.out.println("PID " + process.getPID() + " STOPPED [" + Thread.currentThread().getName() + "] EXIT CODE " + exitCode + " COUNTER " + counter.get());
-            boolean fail = message_count != counter.get();
+            boolean fail = message_count > counter.get();
             stop_latch.countDown();
             if (fail)
               System.err.println("Message count (" + counter.get() + ") does not match expected count of " + message_count + " for PID " + process.getPID());
@@ -129,11 +177,13 @@ public class ProcessTest {
           @Override
           protected void stderr(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
             final String text = Charset.defaultCharset().decode(buffer).toString();
+            //System.err.print("PID " + process.getPID() + " " + text);
             int idx = -1;
             while((idx = text.indexOf("P", idx + 1)) >= 0)
               counter.incrementAndGet();
           }
-        });
+        })
+      ;
       final IProcess process = proc_builder.start();
       //process.waitFor();
       //Thread.sleep(2000);

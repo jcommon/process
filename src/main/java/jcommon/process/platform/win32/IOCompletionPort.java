@@ -63,6 +63,14 @@ public class IOCompletionPort<TAssociation extends Object> implements Serializab
     return io_completion_port_lock;
   }
 
+  public Object getMemoryPool() {
+    return memory_pool;
+  }
+
+  public Object getOverlappedPool() {
+    return overlapped_pool;
+  }
+
   public static interface IAssociateHandlesCallback {
     void callback(boolean success);
   }

@@ -24,7 +24,11 @@ public class Win32ProcessLauncherIOCP {
       STATE_CONNECTED             = 0
     , STATE_STDOUT_READ           = 1
     , STATE_STDOUT_READ_COMPLETED = 2
-    , STATE_DISCONNECT            = 3
+    , STATE_STDERR_READ           = 3
+    , STATE_STDERR_READ_COMPLETED = 4
+    , STATE_STDIN_WRITE           = 5
+    , STATE_STDIN_WRITE_COMPLETED = 6
+    , STATE_DISCONNECT            = 7
   ;
 
   private static class Sequencing {
@@ -113,15 +117,34 @@ public class Win32ProcessLauncherIOCP {
     }
   }
 
-  private static class Context {
+  private static class Context implements ProcessInformation.IWriteCallback {
     public final ProcessInformation process_info;
     public final Sequencing stdout = new Sequencing();
     public final Sequencing stderr = new Sequencing();
     public final Sequencing stdin = new Sequencing();
     public final AtomicBoolean closed = new AtomicBoolean(false);
+    public final Pointer completion_key;
 
-    public Context(ProcessInformation process_info) {
-      this.process_info = process_info;
+    public Context(final Pointer completion_key, final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
+      this.completion_key = completion_key;
+      this.process_info = new ProcessInformation(
+        pid,
+        process,
+        main_thread,
+        stdout_child_process_read,
+        stderr_child_process_read,
+        stdin_child_process_write,
+        inherit_parent_environment,
+        environment_variables,
+        command_line,
+        listeners,
+        this
+      );
+    }
+
+    @Override
+    public boolean write(ByteBuffer bb) {
+      return Win32ProcessLauncherIOCP.write(iocp, this, stdin, completion_key, iocp.getOverlappedPool(), iocp.getMemoryPool(), process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED);
     }
   }
 
@@ -145,6 +168,10 @@ public class Win32ProcessLauncherIOCP {
           read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
         }
 
+        synchronized (context.stderr) {
+          read(iocp, context, context.stderr, completion_key, overlapped_pool, memory_pool, context.process_info.stderr_child_process_read, STATE_STDERR_READ_COMPLETED);
+        }
+
         ResumeThread(context.process_info.main_thread);
         CloseHandle(context.process_info.main_thread);
         break;
@@ -152,6 +179,12 @@ public class Win32ProcessLauncherIOCP {
       case STATE_STDOUT_READ:
         synchronized (context.stdout) {
           read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
+        }
+        break;
+
+      case STATE_STDERR_READ:
+        synchronized (context.stderr) {
+          read(iocp, context, context.stderr, completion_key, overlapped_pool, memory_pool, context.process_info.stderr_child_process_read, STATE_STDERR_READ_COMPLETED);
         }
         break;
 
@@ -185,10 +218,46 @@ public class Win32ProcessLauncherIOCP {
         }
         break;
 
+      case STATE_STDERR_READ_COMPLETED:
+        synchronized (context.stderr) {
+          iocp_buffer = PinnableStruct.unpin(ovl.iocpBuffer);
+
+          if (iocp_buffer != null)
+            iocp_buffer.bytesTransferred(bytesTransferred);
+
+          while(!end_of_stream && (iocp_buffer = context.stderr.nextBuffer(iocp_buffer)) !=  null) {
+            //gc();
+
+            end_of_stream = iocp_buffer.isMarkedAsEndOfStream();
+
+            if (!end_of_stream) {
+              ByteBuffer bb = iocp_buffer.buffer.getByteBuffer(0, iocp_buffer.bytesTransferred);
+              context.process_info.notifyStdErr(bb, iocp_buffer.bytesTransferred);
+            }
+
+            PinnableMemory.dispose(iocp_buffer.buffer);
+
+            iocp_buffer = null;
+          }
+
+          if (!end_of_stream) {
+            iocp.postMessage(completion_key, STATE_STDERR_READ);
+          } else {
+            iocp.postMessage(completion_key, STATE_DISCONNECT);
+          }
+        }
+        break;
+
       case STATE_DISCONNECT: //Close
         synchronized (context.stdout) {
           if (!context.stdout.isClosed()) {
             iocp.postMessage(completion_key, STATE_STDOUT_READ);
+            return;
+          }
+        }
+        synchronized (context.stderr) {
+          if (!context.stderr.isClosed()) {
+            iocp.postMessage(completion_key, STATE_STDERR_READ);
             return;
           }
         }
@@ -321,11 +390,11 @@ public class Win32ProcessLauncherIOCP {
     startup_info.wShowWindow      = new WORD(0);
     startup_info.cbReserved2      = new WORD(0);
     startup_info.lpReserved2      = null;
-//    startup_info.hStdInput        = stdin_child_process_read;
+    startup_info.hStdInput        = stdin_child_process_read;
     startup_info.hStdOutput       = stdout_child_process_write;
-    startup_info.hStdError        = GetStdHandle(STD_ERROR_HANDLE);
-//    startup_info.hStdError        = stderr_child_process_write;
-    startup_info.hStdInput        = GetStdHandle(STD_INPUT_HANDLE);
+//    startup_info.hStdError        = GetStdHandle(STD_ERROR_HANDLE);
+    startup_info.hStdError        = stderr_child_process_write;
+//    startup_info.hStdInput        = GetStdHandle(STD_INPUT_HANDLE);
 
     //We create the process initially suspended while we setup a connection, inform
     //interested parties that the process has been created, etc. Once that's done,
@@ -360,48 +429,21 @@ public class Win32ProcessLauncherIOCP {
     //Associate our new process with the shared i/o completion port.
     //This is *deliberately* done after the process is created mainly so that we have
     //the process id and process handle.
-    final ProcessInformation process_info = new ProcessInformation(
-        proc_info.dwProcessId.intValue(),
-        proc_info.hProcess,
-        proc_info.hThread,
-        stdout_child_process_read,
-        stderr_child_process_read,
-        stdin_child_process_write,
-//        null,
-        inherit_parent_environment,
-        environment_variables,
-        args,
-        listeners,
-        null
-//      new ProcessInformation.ICreateProcessExitCallback() {
-//        @Override
-//        public HANDLE createExitCallback(final ProcessInformation process_info) {
-//          final HANDLEByReference ptr_process_exit_wait = new HANDLEByReference();
-//
-//          //Receive notification when the process exits.
-//          RegisterWaitForSingleObject(
-//              ptr_process_exit_wait,
-//              proc_info.hProcess,
-//              PinnableCallback.pin(new WAITORTIMERCALLBACK() {
-//                @Override
-//                public void WaitOrTimerCallback(Pointer lpParameter, boolean TimerOrWaitFired) {
-//                  PinnableCallback.unpin(this);
-//
-//                  //Post a message to the iocp letting it know that the child has exited.
-//                  //iocp.postMessage(completion_key, OP_CHILD_DISCONNECT);
-//                }
-//              }),
-//              null,
-//              INFINITE,
-//              WT_EXECUTEDEFAULT | WT_EXECUTEONLYONCE
-//          );
-//
-//          return ptr_process_exit_wait.getValue();
-//        }
-//      }
+    final Context context = new Context(
+      completion_key,
+      proc_info.dwProcessId.intValue(),
+      proc_info.hProcess,
+      proc_info.hThread,
+      stdout_child_process_read,
+      stderr_child_process_read,
+      stdin_child_process_write,
+      inherit_parent_environment,
+      environment_variables,
+      args,
+      listeners
     );
 
-    final Context context = new Context(process_info);
+    final ProcessInformation process_info = context.process_info;
 
     if (!iocp.associateHandles(completion_key, context, process_info.stdout_child_process_read, process_info.stderr_child_process_read)) {
       //Ensure we don't get the callback.
@@ -463,6 +505,7 @@ public class Win32ProcessLauncherIOCP {
       PinnableStruct.unpin(o);
 
       switch(err) {
+        case ERROR_INVALID_HANDLE:
         case ERROR_BROKEN_PIPE:
           //Append a special message indicating that we've reached
           //the end of the stream. Outstanding reads will then drain
@@ -470,9 +513,34 @@ public class Win32ProcessLauncherIOCP {
           sequencing.endOfStream();
           iocp.postMessage(completion_key, state);
           break;
+        default:
+          System.err.println("****ReadFile() PID " + context.process_info.getPID() + " ERROR " + err);
+          break;
       }
     }
 
     return false;
+  }
+
+  private static boolean write(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state) {
+    if (context.closed.get()) {
+      return false;
+    }
+
+    //memory from bytebuffer
+
+    final OVERLAPPED_WITH_BUFFER_AND_STATE o = PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE());
+    final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference());
+    o.state = state;
+    o.iocpBuffer = io;
+    io.buffer = PinnableMemory.pin(1024);
+    io.bufferSize = 1024;
+    io.sequenceNumber = sequencing.sequenceNumber();
+
+
+    System.out.println("**********WRITING!");
+
+    //if (!WriteFile(pipe, ))
+    return true;
   }
 }

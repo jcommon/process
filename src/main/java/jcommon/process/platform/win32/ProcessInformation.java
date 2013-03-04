@@ -14,18 +14,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static jcommon.process.api.win32.Win32.*;
+
 final class ProcessInformation implements IProcess {
   public static final int
       MAX_SEQUENCE_NUMBER = 5001
   ;
 
   final int pid;
-  final Win32.HANDLE process;
-  final Win32.HANDLE main_thread;
-  final Win32.HANDLE process_exit_wait;
-  final Win32.HANDLE stdout_child_process_read;
-  final Win32.HANDLE stderr_child_process_read;
-  final Win32.HANDLE stdin_child_process_write;
+  final HANDLE process;
+  final HANDLE main_thread;
+  final HANDLE stdout_child_process_read;
+  final HANDLE stderr_child_process_read;
+  final HANDLE stdin_child_process_write;
 
   final AtomicBoolean starting = new AtomicBoolean(true);
   final AtomicBoolean closing = new AtomicBoolean(false);
@@ -37,11 +38,13 @@ final class ProcessInformation implements IProcess {
   final CountDownLatch exit_latch = new CountDownLatch(1);
   final AtomicInteger exit_value = new AtomicInteger(0);
 
-  public static interface ICreateProcessExitCallback {
-    Win32.HANDLE createExitCallback(ProcessInformation process_info);
+  final IWriteCallback write_callback;
+
+  public static interface IWriteCallback {
+    boolean write(ByteBuffer bb);
   }
 
-  public ProcessInformation(final int pid, final Win32.HANDLE process, final Win32.HANDLE main_thread, final Win32.HANDLE stdout_child_process_read, final Win32.HANDLE stderr_child_process_read, final Win32.HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners, final ICreateProcessExitCallback callback) {
+  public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners, final IWriteCallback write_callback) {
     this.pid = pid;
     this.process = process;
     this.main_thread = main_thread;
@@ -54,7 +57,7 @@ final class ProcessInformation implements IProcess {
     this.inherit_parent_environment = inherit_parent_environment;
     this.environment_variables = environment_variables;
 
-    this.process_exit_wait = callback != null ? callback.createExitCallback(this) : null;
+    this.write_callback = write_callback;
   }
 
   /**
@@ -133,6 +136,21 @@ final class ProcessInformation implements IProcess {
   @Override
   public boolean waitFor(long timeout, TimeUnit unit) {
     return await(timeout, unit);
+  }
+
+  @Override
+  public boolean write(byte b[]) {
+    return write(b, 0, b.length);
+  }
+
+  @Override
+  public boolean write(byte b[], int off, int len) {
+    return write(ByteBuffer.wrap(b, off, len));
+  }
+
+  @Override
+  public boolean write(ByteBuffer bb) {
+    return write_callback.write(bb);
   }
 
   public void notifyStarted() {

@@ -82,7 +82,6 @@ public class StandardStreamPipe extends ProcessListener {
     int chunk_size;
 
     synchronized (output) {
-      output.print("--");
       while(buffer.hasRemaining()) {
         chunk_size = Math.min(buffer.remaining(), limit);
         buffer.get(availablePoolBuffer, 0, chunk_size);
@@ -119,10 +118,12 @@ public class StandardStreamPipe extends ProcessListener {
     final int limit = Math.min(bytesRead, poolBufferSize);
     int chunk_size;
 
-    while(buffer.hasRemaining()) {
-      chunk_size = Math.min(buffer.remaining(), limit);
-      buffer.get(availablePoolBuffer, 0, chunk_size);
-      output.write(availablePoolBuffer, 0, chunk_size);
+    synchronized (output) {
+      while(buffer.hasRemaining()) {
+        chunk_size = Math.min(buffer.remaining(), limit);
+        buffer.get(availablePoolBuffer, 0, chunk_size);
+        output.write(availablePoolBuffer, 0, chunk_size);
+      }
     }
 
     buffer.flip();

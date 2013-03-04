@@ -40,6 +40,7 @@ public class Resources {
     , STDOUT_1           = pathForResource("stdout-1")
     , STDERR_ECHO_REPEAT = pathForResource("stderr-echo-repeat")
     , STDOUT_ECHO_REPEAT = pathForResource("stdout-echo-repeat")
+    , STDOUT_STDERR_ECHO_REPEAT = pathForResource("stdout-stderr-echo-repeat")
   ;
 
   public static String[] ALL = new String[] {
