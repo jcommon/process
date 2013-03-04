@@ -74,6 +74,16 @@ public abstract class ProcessListener implements IProcessListener {
   }
 
   @Override
+  public final void stdin(IProcess process, ByteBuffer buffer, int bytesWritten) throws Throwable {
+    final ByteArrayPool.Buffer pool_buffer = buffer_pool.requestInstance();
+    try {
+      stdin(process, buffer, bytesWritten, pool_buffer.getBuffer(), pool_buffer.getBufferSize());
+    } finally {
+      buffer_pool.returnToPool(pool_buffer);
+    }
+  }
+
+  @Override
   public final void stdout(IProcess process, ByteBuffer buffer, int bytesRead) throws Throwable {
 //    check();
 //    final ByteArrayPool.Buffer pool_buffer = buffer_pool.requestInstance();
@@ -104,6 +114,7 @@ public abstract class ProcessListener implements IProcessListener {
 
   protected void processStarted(IProcess process) throws Throwable { }
   protected void processStopped(IProcess process, int exitCode) throws Throwable { }
+  protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void stderr(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable { }
   protected void processError(IProcess process, Throwable t) { }

@@ -35,8 +35,8 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
-  final int times = 32;
-  final int message_count = 1000;
+  final int times = 1;
+  final int message_count = 10;
 
   final ProcessBuilder builder_stdin_1 = ProcessBuilder.create()
     .withExecutable(Resources.STDIN_1)
@@ -116,11 +116,27 @@ public class ProcessTest {
   public void testStdIn() throws Throwable {
     for(int time = 0; time < times; ++time) {
       final ProcessBuilder proc_builder = builder_stdin_1.copy()
-        .addArguments("P:" + (time + 1));
+        .addArguments("P:" + (time + 1))
+        .addListener(new ProcessListener() {
+          @Override
+          protected void stdin(IProcess process, ByteBuffer buffer, int bytesWritten, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
+            final String written_message = Charset.defaultCharset().decode(buffer).toString();
+            System.err.println("PROCESS PID " + process.getPID() + " WROTE " + bytesWritten + " bytes(s): " + written_message);
+          }
+
+          @Override
+          protected void stdout(IProcess process, ByteBuffer buffer, int bytesRead, byte[] availablePoolBuffer, int poolBufferSize) throws Throwable {
+          }
+        })
+      ;
+      final IProcess proc = proc_builder.start();
+      proc.println("HELLO WORLD!");
+      proc.println();
+      proc.await();
     }
   }
 
-  @Test
+  //@Test
   public void testLaunchProcess() throws Throwable {
 //    for(int i = 45; i >= 0; --i) {
 //      System.err.println(i + "...");

@@ -1,12 +1,14 @@
 package jcommon.process.platform.win32;
 
 import com.sun.jna.Pointer;
+import jcommon.core.StringUtil;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.win32.Win32;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +23,10 @@ final class ProcessInformation implements IProcess {
       MAX_SEQUENCE_NUMBER = 5001
   ;
 
+  private static final String
+      NEW_LINE = System.getProperty("line.separator")
+  ;
+
   final int pid;
   final HANDLE process;
   final HANDLE main_thread;
@@ -30,6 +36,7 @@ final class ProcessInformation implements IProcess {
 
   final AtomicBoolean starting = new AtomicBoolean(true);
   final AtomicBoolean closing = new AtomicBoolean(false);
+  final AtomicBoolean running = new AtomicBoolean(false);
 
   final String[] command_line;
   final IProcessListener[] listeners;
@@ -149,6 +156,31 @@ final class ProcessInformation implements IProcess {
   }
 
   @Override
+  public boolean println() {
+    return println(StringUtil.empty);
+  }
+
+  @Override
+  public boolean print(CharSequence seq) {
+    return print(Charset.defaultCharset(), seq);
+  }
+
+  @Override
+  public boolean println(CharSequence seq) {
+    return println(Charset.defaultCharset(), seq);
+  }
+
+  @Override
+  public boolean print(Charset charset, CharSequence seq) {
+    return write(charset.encode(seq.toString()));
+  }
+
+  @Override
+  public boolean println(Charset charset, CharSequence seq) {
+    return write(charset.encode(seq.toString() + NEW_LINE));
+  }
+
+  @Override
   public boolean write(ByteBuffer bb) {
     return write_callback.write(bb);
   }
@@ -169,6 +201,17 @@ final class ProcessInformation implements IProcess {
         listener.stopped(this, exit_code);
       }
     } catch(Throwable t) {
+      notifyError(t);
+    }
+  }
+
+  public void notifyStdIn(final ByteBuffer buffer, final int bytesWritten) {
+    try {
+      for(IProcessListener listener : listeners) {
+        listener.stdin(this, buffer, bytesWritten);
+      }
+    } catch(Throwable t) {
+      //t.printStackTrace();
       notifyError(t);
     }
   }

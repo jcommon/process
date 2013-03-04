@@ -11,8 +11,7 @@ import jcommon.process.api.PinnableObject;
 import jcommon.process.api.PinnableStruct;
 
 import java.nio.ByteBuffer;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static jcommon.process.api.win32.Kernel32.*;
@@ -28,7 +27,8 @@ public class Win32ProcessLauncherIOCP {
     , STATE_STDERR_READ_COMPLETED = 4
     , STATE_STDIN_WRITE           = 5
     , STATE_STDIN_WRITE_COMPLETED = 6
-    , STATE_DISCONNECT            = 7
+    , STATE_STDIN_WRITE_FAILED    = 7
+    , STATE_DISCONNECT            = 8
   ;
 
   private static class Sequencing {
@@ -40,6 +40,14 @@ public class Win32ProcessLauncherIOCP {
     private boolean closed = false;
     private int currentSequenceNumber = 1;
     private int currentSequenceMarker = 1;
+
+    public Sequencing() {
+    }
+
+    public Sequencing(int sequenceNumber, int sequenceMarker) {
+      this.currentSequenceNumber = sequenceNumber;
+      this.currentSequenceMarker = sequenceMarker;
+    }
 
     public boolean isClosed() {
       return closed;
@@ -65,12 +73,11 @@ public class Win32ProcessLauncherIOCP {
       return (currentSequenceMarker = (currentSequenceMarker + 1) % MAX_SEQUENCE_NUMBER);
     }
 
-    @SuppressWarnings("unused")
-    public IOCPBUFFER nextBuffer() {
-      return nextBuffer(null);
+    public IOCPBUFFER nextBuffer(IOCPBUFFER iocpBuffer) {
+      return nextBuffer(iocpBuffer, true);
     }
 
-    public IOCPBUFFER nextBuffer(IOCPBUFFER iocpBuffer) {
+    public IOCPBUFFER nextBuffer(IOCPBUFFER iocpBuffer, boolean incrementSequenceNumber) {
       //if (closed) {
       //  return createEndOfStreamMarker();
       //}
@@ -78,7 +85,9 @@ public class Win32ProcessLauncherIOCP {
       IOCPBUFFER retBuff;
 
       if (iocpBuffer != null) {
-        incrementSequenceNumber();
+        if (incrementSequenceNumber) {
+          incrementSequenceNumber();
+        }
 
         int buffer_sequence_number = iocpBuffer.sequenceNumber;
         if (buffer_sequence_number == currentSequenceMarker) {
@@ -100,20 +109,26 @@ public class Win32ProcessLauncherIOCP {
       return retBuff;
     }
 
-    private IOCPBUFFER createEndOfStreamMarker() {
+    private IOCPBUFFER createEndOfStreamMarker(boolean incrementSequenceNumber) {
       final IOCPBUFFER buff = new IOCPBUFFER();
       buff.buffer = null;
       buff.bufferSize = 0;
-      buff.sequenceNumber = incrementSequenceNumber();
+      buff.sequenceNumber = incrementSequenceNumber ? incrementSequenceNumber() : sequenceNumber();
       buff.markAsEndOfStream();
       return buff;
     }
 
     public void endOfStream() {
+      endOfStream(true, true);
+    }
+
+    public void endOfStream(boolean incrementSequenceNumber, boolean incrementMarker) {
       //Append a special marker buffer to the end of the stream.
-      final IOCPBUFFER buff = createEndOfStreamMarker();
+      final IOCPBUFFER buff = createEndOfStreamMarker(incrementSequenceNumber);
       bufferMap.put(buff.sequenceNumber, buff);
-      incrementMarker();
+      if (incrementMarker) {
+        incrementMarker();
+      }
     }
   }
 
@@ -121,7 +136,9 @@ public class Win32ProcessLauncherIOCP {
     public final ProcessInformation process_info;
     public final Sequencing stdout = new Sequencing();
     public final Sequencing stderr = new Sequencing();
-    public final Sequencing stdin = new Sequencing();
+    public final Sequencing stdin = new Sequencing(0, 1);
+    public final Deque<ByteBuffer> pending_start_writes = new LinkedList<ByteBuffer>();
+    public final AtomicBoolean started = new AtomicBoolean(false);
     public final AtomicBoolean closed = new AtomicBoolean(false);
     public final Pointer completion_key;
 
@@ -144,7 +161,18 @@ public class Win32ProcessLauncherIOCP {
 
     @Override
     public boolean write(ByteBuffer bb) {
-      return Win32ProcessLauncherIOCP.write(iocp, this, stdin, completion_key, iocp.getOverlappedPool(), iocp.getMemoryPool(), process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED);
+      synchronized (stdin) {
+        if (!started.get()) {
+          pending_start_writes.offer(bb);
+          return true;
+        }
+
+        if (!process_info.running.get()) {
+          return false;
+        }
+
+        return Win32ProcessLauncherIOCP.write(iocp, this, stdin, completion_key, iocp.getOverlappedPool(), iocp.getMemoryPool(), process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, bb);
+      }
     }
   }
 
@@ -157,12 +185,18 @@ public class Win32ProcessLauncherIOCP {
 
   private static void completion_thread(final int state, final int bytesTransferred, final OVERLAPPED_WITH_BUFFER_AND_STATE ovl, final Context context, final Pointer completion_key, final Pointer ptr_overlapped, final IntByReference ptr_bytes_transferred, final Object overlapped_pool, final Object memory_pool, final IOCompletionPort<Context> iocp) throws Throwable {
     IOCPBUFFER iocp_buffer;
+    ByteBuffer buffer_written;
     boolean end_of_stream = false;
 
     switch(state) {
       case STATE_CONNECTED:
-        //Connected
-        context.process_info.notifyStarted();
+        synchronized (context.stdin) {
+          if (!context.process_info.running.compareAndSet(false, true))
+            return;
+
+          //Connected
+          context.process_info.notifyStarted();
+        }
 
         synchronized (context.stdout) {
           read(iocp, context, context.stdout, completion_key, overlapped_pool, memory_pool, context.process_info.stdout_child_process_read, STATE_STDOUT_READ_COMPLETED);
@@ -174,6 +208,19 @@ public class Win32ProcessLauncherIOCP {
 
         ResumeThread(context.process_info.main_thread);
         CloseHandle(context.process_info.main_thread);
+
+        synchronized (context.stdin) {
+          //We want to ensure that the child process is up and running and able to process anything we're
+          //going to write. This is so our writes don't block waiting on the child process to read from its
+          //stdin and emptying its buffer. So our pending writes need to happen after we've started up.
+          //This means that all writes done during notifyStarted() will be pending until this point.
+          if (context.started.compareAndSet(false, true)) {
+            ByteBuffer bb;
+            while((bb = context.pending_start_writes.poll()) != null) {
+              write(iocp, context, context.stdin, completion_key, overlapped_pool, memory_pool, context.process_info.stdin_child_process_write, STATE_STDIN_WRITE_COMPLETED, bb);
+            }
+          }
+        }
         break;
 
       case STATE_STDOUT_READ:
@@ -248,6 +295,44 @@ public class Win32ProcessLauncherIOCP {
         }
         break;
 
+      case STATE_STDIN_WRITE:
+        break;
+
+      case STATE_STDIN_WRITE_FAILED:
+        break;
+
+      case STATE_STDIN_WRITE_COMPLETED:
+        synchronized (context.stdin) {
+          //Do NOT unpin here. We need its tag to stay resident along
+          //with the struct. We'll unpin it later after processing it.
+          iocp_buffer = ovl.iocpBuffer;
+
+          if (iocp_buffer != null)
+            iocp_buffer.bytesTransferred(bytesTransferred);
+
+          while(!end_of_stream && (iocp_buffer = context.stdin.nextBuffer(iocp_buffer, false)) !=  null) {
+            //gc();
+
+            buffer_written = PinnableStruct.untag(iocp_buffer);
+            PinnableStruct.unpin(iocp_buffer);
+
+            end_of_stream = iocp_buffer.isMarkedAsEndOfStream();
+
+            if (!end_of_stream) {
+              context.process_info.notifyStdIn(buffer_written, iocp_buffer.bytesTransferred);
+            }
+
+            PinnableMemory.dispose(iocp_buffer.buffer);
+
+            iocp_buffer = null;
+          }
+
+          if (end_of_stream) {
+            iocp.postMessage(completion_key, STATE_DISCONNECT);
+          }
+        }
+        break;
+
       case STATE_DISCONNECT: //Close
         synchronized (context.stdout) {
           if (!context.stdout.isClosed()) {
@@ -255,6 +340,7 @@ public class Win32ProcessLauncherIOCP {
             return;
           }
         }
+
         synchronized (context.stderr) {
           if (!context.stderr.isClosed()) {
             iocp.postMessage(completion_key, STATE_STDERR_READ);
@@ -262,31 +348,43 @@ public class Win32ProcessLauncherIOCP {
           }
         }
 
-        if (!context.closed.compareAndSet(false, true))
-          return;
+        synchronized (context.stdin) {
+          if (!context.stdin.isClosed()) {
+            context.stdin.endOfStream(true, false);
+            iocp.postMessage(completion_key, STATE_STDIN_WRITE_COMPLETED);
+            return;
+          }
+        }
 
-        CloseHandle(context.process_info.stdin_child_process_write);
-        CloseHandle(context.process_info.stderr_child_process_read);
-        CloseHandle(context.process_info.stdout_child_process_read);
+        synchronized (context.stdin) {
+          if (!context.closed.compareAndSet(false, true))
+            return;
 
-        //By the time we get here, the process should have already exited.
-        //But just in case it hasn't, we'll wait around for it.
-        WaitForSingleObject(context.process_info.process, INFINITE);
+          CloseHandle(context.process_info.stdin_child_process_write);
+          CloseHandle(context.process_info.stderr_child_process_read);
+          CloseHandle(context.process_info.stdout_child_process_read);
 
-        final IntByReference exit_code = new IntByReference();
-        GetExitCodeProcess(context.process_info.process, exit_code);
+          //By the time we get here, the process should have already exited.
+          //But just in case it hasn't, we'll wait around for it.
+          WaitForSingleObject(context.process_info.process, INFINITE);
 
-        CloseHandle(context.process_info.process);
+          final IntByReference exit_code = new IntByReference();
+          GetExitCodeProcess(context.process_info.process, exit_code);
 
-        context.process_info.exit_value.set(exit_code.getValue());
+          CloseHandle(context.process_info.process);
 
-        context.process_info.notifyStopped(exit_code.getValue());
+          context.process_info.exit_value.set(exit_code.getValue());
 
-        iocp.release(completion_key);
+          context.process_info.notifyStopped(exit_code.getValue());
 
-        PinnableObject.unpin(context);
+          iocp.release(completion_key);
 
-        context.process_info.exit_latch.countDown();
+          PinnableObject.unpin(context);
+
+          context.process_info.running.set(false);
+
+          context.process_info.exit_latch.countDown();
+        }
         break;
     }
   }
@@ -349,7 +447,7 @@ public class Win32ProcessLauncherIOCP {
 
     // Create a pipe for the child process's STDIN.
 
-    if (!CreatePipe(ptr_stdin_child_process_read, ptr_stdin_child_process_write, saAttr, 0)) {
+    if (!CreateOverlappedPipe(ptr_stdin_child_process_read, ptr_stdin_child_process_write, saAttr, 1024, 0, FILE_FLAG_OVERLAPPED)) {
       CloseHandle(stdout_child_process_read);
       CloseHandle(stdout_child_process_write);
       CloseHandle(stderr_child_process_read);
@@ -361,7 +459,6 @@ public class Win32ProcessLauncherIOCP {
 
     final HANDLE stdin_child_process_read = ptr_stdin_child_process_read.getValue();
     final HANDLE stdin_child_process_write = ptr_stdin_child_process_write.getValue();
-
 
     if (!SetHandleInformation(stdin_child_process_write, HANDLE_FLAG_INHERIT, 0)) {
       CloseHandle(stdout_child_process_read);
@@ -445,7 +542,7 @@ public class Win32ProcessLauncherIOCP {
 
     final ProcessInformation process_info = context.process_info;
 
-    if (!iocp.associateHandles(completion_key, context, process_info.stdout_child_process_read, process_info.stderr_child_process_read)) {
+    if (!iocp.associateHandles(completion_key, context, process_info.stdout_child_process_read, process_info.stderr_child_process_read, process_info.stdin_child_process_write)) {
       //Ensure we don't get the callback.
       //UnregisterWait(process_info.process_exit_wait);
 
@@ -522,25 +619,40 @@ public class Win32ProcessLauncherIOCP {
     return false;
   }
 
-  private static boolean write(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state) {
-    if (context.closed.get()) {
-      return false;
-    }
-
+  private static boolean write(final IOCompletionPort<Context> iocp, final Context context, final Sequencing sequencing, final Pointer completion_key, final Object overlapped_pool, final Object memory_pool, final HANDLE pipe, final int state, final ByteBuffer bb) {
     //memory from bytebuffer
 
     final OVERLAPPED_WITH_BUFFER_AND_STATE o = PinnableStruct.pin(new OVERLAPPED_WITH_BUFFER_AND_STATE());
-    final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference());
+    final IOCPBUFFER.ByReference io = PinnableStruct.pin(new IOCPBUFFER.ByReference(), bb);
     o.state = state;
     o.iocpBuffer = io;
-    io.buffer = PinnableMemory.pin(1024);
-    io.bufferSize = 1024;
-    io.sequenceNumber = sequencing.sequenceNumber();
+    io.buffer = null;
+    io.bufferSize = 0;
+    io.sequenceNumber = sequencing.incrementSequenceNumber();
 
+    if (!WriteFile(pipe, bb, bb.remaining(), null, o)) {
+      int err = Native.getLastError();
+      switch(err) {
+        case ERROR_IO_PENDING:
+          //Normal operation. Nothing to see here.
+          return true;
+      }
 
-    System.out.println("**********WRITING!");
+      PinnableMemory.dispose(io.buffer);
+      PinnableStruct.unpin(io);
+      PinnableStruct.unpin(o);
 
-    //if (!WriteFile(pipe, ))
+      switch(err) {
+        case ERROR_INVALID_HANDLE:
+        case ERROR_BROKEN_PIPE:
+          //In the case of a write, do nothing but return false;
+          return false;
+        default:
+          System.err.println("****WriteFile() PID " + context.process_info.getPID() + " ERROR " + err);
+          break;
+      }
+    }
+
     return true;
   }
 }

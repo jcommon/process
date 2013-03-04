@@ -20,6 +20,7 @@
 package jcommon.process;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -157,4 +158,9 @@ public interface IProcess {
   boolean write(byte b[]);
   boolean write(byte b[], int off, int len);
   boolean write(ByteBuffer bb);
+  boolean println();
+  boolean print(CharSequence seq);
+  boolean println(CharSequence seq);
+  boolean print(Charset charset, CharSequence seq);
+  boolean println(Charset charset, CharSequence seq);
 }
