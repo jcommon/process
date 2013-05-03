@@ -38,6 +38,6 @@ public final class ProcessLauncher extends UnixPlatformProvider implements IProc
 
   @Override
   public IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
-    return IProcessLauncher.DEFAULT.launch(inherit_parent_environment, environment_variables, command_line, listeners);
+    return UnixProcessLauncherEPoll.launch(inherit_parent_environment, environment_variables, command_line, listeners);
   }
 }

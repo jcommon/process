@@ -31,85 +31,14 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static jcommon.process.ProcessResources.*;
+
 import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
   final int times = 2;
-  final int message_count = 10;
-
-  final ProcessBuilder builder_stdin_1 = ProcessBuilder.create()
-    .withExecutable(Resources.STDIN_1)
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  final ProcessBuilder builder_stdout_1 = ProcessBuilder.create()
-    .withExecutable(Resources.STDOUT_1)
-      .andArgument(Integer.toString(message_count))
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  final ProcessBuilder builder_stdout_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDOUT_ECHO_REPEAT)
-      .andArgument(Integer.toString(message_count))
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  final ProcessBuilder builder_stderr_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDERR_ECHO_REPEAT)
-      .andArgument(Integer.toString(message_count))
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  final ProcessBuilder builder_stdout_stderr_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDOUT_STDERR_ECHO_REPEAT)
-      .andArgument(Integer.toString(message_count))
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  final ProcessBuilder builder_server = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument("C:\\gitmo\\websphere-8.5.0\\bin\\server.bat")
-      .andArgument("start")
-      .andArgument("8280")
-      .withListener(
-          StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
-          //.redirectStdErr(StandardStream.Null)
-      )
-  ;
-
-  @BeforeClass
-  public static void before() {
-    assertTrue(Resources.loadAllResources());
-  }
+  final int message_count = ProcessResources.STANDARD_MESSAGE_COUNT;
 
   private static int countNewLines(ByteBuffer buffer) {
     final String text = Charset.defaultCharset().decode(buffer).toString();
@@ -130,7 +59,7 @@ public class ProcessTest {
       final AtomicInteger stdin_count = new AtomicInteger(0);
       final AtomicInteger stdout_count = new AtomicInteger(0);
 
-      final ProcessBuilder proc_builder = builder_stdin_1.copy()
+      final ProcessBuilder proc_builder = STDIN_1.copy()
         .addListener(new ProcessListener<Integer>() {
           @Override
           protected void processStarted(IProcess process) throws Throwable {
@@ -196,7 +125,7 @@ public class ProcessTest {
     //p.launch(Resources.STDOUT_1, "how", "are", "you");
 
     for(int time = 0; time < times; ++time) {
-      final ProcessBuilder proc_builder = builder_stdout_echo_repeat.copy()
+      final ProcessBuilder proc_builder = STDOUT_ECHO_REPEAT.copy()
         .addArguments("P:" + (time + 1))
         .addListener(new ProcessListener() {
           private AtomicInteger counter = new AtomicInteger(0);
