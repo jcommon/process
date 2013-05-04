@@ -10,6 +10,7 @@
           </option>
           <option name="goals">
             <list>
+              <option value="-DskipTests=true" />
               <option value="clean" />
               <option value="compile" />
               <option value="install" />
