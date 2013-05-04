@@ -26,6 +26,7 @@ import jcommon.process.api.PinnableStruct;
 import jcommon.process.platform.win32.OVERLAPPED_WITH_BUFFER_AND_STATE;
 
 import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.util.List;
 
 import static jcommon.process.api.JNAUtils.fromSeq;
@@ -36,6 +37,7 @@ public class Kernel32 implements Win32Library {
   public static final int
       MAX_PATH = 260
     , MAX_COMMAND_LINE_SIZE = 32768 - 2 /* - size of the Unicode terminating null character */
+    , MAX_ANSI_ENVIRONMENT_BLOCK_SIZE = 32767 /* max size of the environment block including terminating block nulls */
   ;
 
   @SuppressWarnings("unused")
@@ -319,6 +321,9 @@ public class Kernel32 implements Win32Library {
   public static native int GetCurrentProcessId();
   public static native boolean TerminateProcess(HANDLE hProcess, int uExitCode);
 
+  public static Pointer GetEnvironmentStrings() { return CharEncodingSpecific.GetEnvironmentStrings(); }
+  public static boolean FreeEnvironmentStrings(Pointer lpszEnvironmentBlock) { return CharEncodingSpecific.FreeEnvironmentStrings(lpszEnvironmentBlock); }
+
   public static native boolean RegisterWaitForSingleObject(HANDLEByReference phNewWaitObject, HANDLE hObject, WAITORTIMERCALLBACK Callback, Pointer Context, int dwMilliseconds, int dwFlags);
   public static native boolean UnregisterWait(HANDLE WaitHandle);
 
@@ -372,14 +377,13 @@ public class Kernel32 implements Win32Library {
   public static native HANDLE GetStdHandle(DWORD nStdHandle);
   public static native int ResumeThread(HANDLE hThread);
   public static native int GetExitCodeProcess(HANDLE hProcess, IntByReference lpExitCode);
-  public static int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CharEncodingSpecific.CreateProcess(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
+  public static int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CharEncodingSpecific.CreateProcess(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
 
   private static final String LIB = "Kernel32";
 
   static {
     Native.register(LIB);
     CharEncodingSpecific = USE_UNICODE ? new Unicode() : new ASCII();
-    //CharEncodingSpecific = new ASCII();
   }
 
   static CharacterEncodingSpecificFunctions CharEncodingSpecific;
@@ -389,7 +393,9 @@ public class Kernel32 implements Win32Library {
     int SetCurrentDirectory(final String path);
     HANDLE CreateNamedPipe(String lpName, int dwOpenMode, int dwPipeMode, int nMaxInstances, int nOutBufferSize, int nInBufferSize, int nDefaultTimeOut, SECURITY_ATTRIBUTES lpSecurityAttributes);
     HANDLE CreateFile(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile);
-    int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation);
+    int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation);
+    Pointer GetEnvironmentStrings();
+    boolean FreeEnvironmentStrings(Pointer lpszEnvironmentBlock);
   }
 
   public static class ASCII implements CharacterEncodingSpecificFunctions {
@@ -412,9 +418,17 @@ public class Kernel32 implements Win32Library {
     public static native HANDLE CreateFileA(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile);
     public HANDLE CreateFile(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile) { return CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
 
-    public static native int CreateProcessA(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) throws LastErrorException;
+    public static native int CreateProcessA(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) throws LastErrorException;
     @Override
-    public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessA(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
+    public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessA(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
+
+    public static native Pointer GetEnvironmentStringsA();
+    @Override
+    public Pointer GetEnvironmentStrings() { return GetEnvironmentStringsA(); }
+
+    public static native boolean FreeEnvironmentStringsA(Pointer lpszEnvironmentBlock);
+    @Override
+    public boolean FreeEnvironmentStrings(Pointer lpszEnvironmentBlock) { return FreeEnvironmentStringsA(lpszEnvironmentBlock); }
   }
 
   public static class Unicode implements CharacterEncodingSpecificFunctions {
@@ -437,9 +451,17 @@ public class Kernel32 implements Win32Library {
     public static native HANDLE CreateFileW(WString lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile);
     public HANDLE CreateFile(String lpFileName, int dwDesiredAccess, int dwShareMode, SECURITY_ATTRIBUTES lpSecurityAttributes, int dwCreationDisposition, int dwFlagsAndAttributes, HANDLE hTemplateFile) { return CreateFileW(new WString(lpFileName), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
 
-    public static native int CreateProcessW(WString lpApplicationName, WString lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) throws LastErrorException;
+    public static native int CreateProcessW(WString lpApplicationName, WString lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) throws LastErrorException;
     @Override
-    public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessW(lpApplicationName == null ? null : new WString(lpApplicationName), lpCommandLine != null ? new WString(lpCommandLine) : null, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
+    public int CreateProcess(String lpApplicationName, String lpCommandLine, SECURITY_ATTRIBUTES lpProcessAttributes, SECURITY_ATTRIBUTES lpThreadAttributes, boolean bInheritHandles, DWORD dwCreationFlags, ByteBuffer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION.ByReference lpProcessInformation) { return CreateProcessW(lpApplicationName == null ? null : new WString(lpApplicationName), lpCommandLine != null ? new WString(lpCommandLine) : null, lpProcessAttributes, lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation); }
+
+    public static native Pointer GetEnvironmentStringsW();
+    @Override
+    public Pointer GetEnvironmentStrings() { return GetEnvironmentStringsW(); }
+
+    public static native boolean FreeEnvironmentStringsW(Pointer lpszEnvironmentBlock);
+    @Override
+    public boolean FreeEnvironmentStrings(Pointer lpszEnvironmentBlock) { return FreeEnvironmentStringsW(lpszEnvironmentBlock); }
   }
 
 

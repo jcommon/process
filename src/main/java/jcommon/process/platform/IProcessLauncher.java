@@ -20,6 +20,7 @@
 package jcommon.process.platform;
 
 import jcommon.core.platform.IPlatformImplementation;
+import jcommon.process.IEnvironmentVariableBlock;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
@@ -39,12 +40,18 @@ public interface IProcessLauncher extends IPlatformImplementation {
     }
 
     @Override
-    public final IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
+    public final IEnvironmentVariableBlock requestParentEnvironmentVariableBlock() {
+      return null;
+    }
+
+    @Override
+    public final IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] command_line, final IProcessListener[] listeners) {
       throw new UnsupportedOperationException("launch");
     }
   }
 
   public static final IProcessLauncher DEFAULT = Default.INSTANCE;
 
-  IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners);
+  IEnvironmentVariableBlock requestParentEnvironmentVariableBlock();
+  IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] command_line, final IProcessListener[] listeners);
 }

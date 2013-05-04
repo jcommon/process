@@ -4,6 +4,7 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import jcommon.process.IEnvironmentVariable;
+import jcommon.process.IEnvironmentVariableBlock;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.PinnableMemory;
@@ -142,7 +143,7 @@ public class Win32ProcessLauncherIOCP {
     public final AtomicBoolean closed = new AtomicBoolean(false);
     public final Pointer completion_key;
 
-    public Context(final Pointer completion_key, final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
+    public Context(final Pointer completion_key, final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] command_line, final IProcessListener[] listeners) {
       this.completion_key = completion_key;
       this.process_info = new ProcessInformation(
         pid,
@@ -389,8 +390,13 @@ public class Win32ProcessLauncherIOCP {
     }
   }
 
-  public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
+  public static IEnvironmentVariableBlock requestParentEnvironmentVariableBlock() {
+    return new ParentEnvironmentVariableBlock();
+  }
+
+  public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] args, final IProcessListener[] listeners) {
     final String command_line = formulateSanitizedCommandLine(args);
+    final ByteBuffer env_vars = formulateEnvironmentVariableBlock(environment_variables);
 
     //Setup pipes for stdout/stderr/stdin redirection.
     //Set the bInheritHandle flag so pipe handles are inherited.
@@ -497,7 +503,7 @@ public class Win32ProcessLauncherIOCP {
     //interested parties that the process has been created, etc. Once that's done,
     //we can start read operations.
     try {
-      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED | CREATE_NO_WINDOW), Pointer.NULL /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
+      final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT), env_vars /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
       if (!success) {
         throw new IllegalStateException("Unable to create a process with the following command line: " + command_line);
       }

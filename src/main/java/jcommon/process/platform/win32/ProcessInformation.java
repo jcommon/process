@@ -3,6 +3,7 @@ package jcommon.process.platform.win32;
 import com.sun.jna.Pointer;
 import jcommon.core.StringUtil;
 import jcommon.process.IEnvironmentVariable;
+import jcommon.process.IEnvironmentVariableBlock;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.win32.Win32;
@@ -41,7 +42,7 @@ final class ProcessInformation implements IProcess {
   final String[] command_line;
   final IProcessListener[] listeners;
   final boolean inherit_parent_environment;
-  final IEnvironmentVariable[] environment_variables;
+  final IEnvironmentVariableBlock environment_variables;
   final CountDownLatch exit_latch = new CountDownLatch(1);
   final AtomicInteger exit_value = new AtomicInteger(0);
 
@@ -51,7 +52,7 @@ final class ProcessInformation implements IProcess {
     boolean write(ByteBuffer bb, Object attachment);
   }
 
-  public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners, final IWriteCallback write_callback) {
+  public ProcessInformation(final int pid, final HANDLE process, final HANDLE main_thread, final HANDLE stdout_child_process_read, final HANDLE stderr_child_process_read, final HANDLE stdin_child_process_write, final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] command_line, final IProcessListener[] listeners, final IWriteCallback write_callback) {
     this.pid = pid;
     this.process = process;
     this.main_thread = main_thread;
@@ -95,7 +96,7 @@ final class ProcessInformation implements IProcess {
    * @see IProcess#getEnvironmentVariables()
    */
   @Override
-  public IEnvironmentVariable[] getEnvironmentVariables() {
+  public IEnvironmentVariableBlock getEnvironmentVariables() {
     return environment_variables;
   }
 
@@ -245,6 +246,7 @@ final class ProcessInformation implements IProcess {
     }
   }
 
+  @SuppressWarnings("unchecked")
   public void notifyStdIn(final ByteBuffer buffer, final int bytesWritten, final Object attachment) {
     try {
       for(IProcessListener listener : listeners) {

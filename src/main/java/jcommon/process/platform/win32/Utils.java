@@ -1,5 +1,16 @@
 package jcommon.process.platform.win32;
 
+import com.sun.jna.Pointer;
+import com.sun.jna.WString;
+import com.sun.jna.ptr.PointerByReference;
+import jcommon.process.IEnvironmentVariable;
+import jcommon.process.IEnvironmentVariableBlock;
+import jcommon.process.api.win32.Userenv;
+import jcommon.process.api.win32.Win32Library;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static jcommon.process.api.win32.Win32.*;
@@ -167,6 +178,72 @@ final class Utils {
     }
 
     return sb.toString();
+  }
+
+  public static ByteBuffer formulateEnvironmentVariableBlock(IEnvironmentVariableBlock env) {
+//    PointerByReference ptr_ref = new PointerByReference();
+//    Userenv.CreateEnvironmentBlock(ptr_ref, null, true);
+//    Pointer ptr = ptr_ref.getValue();
+//    byte b1, b2, b3 = 0, b4 = 0;
+//    int i = 0;
+//    while(true) {
+//      b1 = b3;
+//      b2 = b4;
+//      b3 = ptr.getByte(i++);
+//      b4 = ptr.getByte(i++);
+//
+//      if (b1 == 0 && b2 == 0 && b3 == 0 && b4 == 0) {
+//        break;
+//      }
+//
+//      if (b3 == 0 && b4 == 0) {
+//        ByteBuffer bb = ptr.getByteBuffer(0, i - 2);
+//        String s = Charset.forName("UNICODE").decode(bb).toString();
+//        //String s = ptr.getString(i);
+//        System.out.println(s);
+//        ptr = ptr.getPointer(i);
+//        i = 0;
+//      }
+//    }
+
+
+    //final byte[] terminator = new byte[] { 0 }; // Win32Library.USE_UNICODE ? new byte[] { 0, 0 } : new byte[] { 0 };
+    final byte[] terminator = new byte[] { 0, 0 };
+    //final String charset_name = "ASCII"; // Win32Library.USE_UNICODE ? "UTF-8" : "ASCII";
+    final String charset_name = "UTF-16LE"; // Win32Library.USE_UNICODE ? "UTF-8" : "ASCII";
+    final Charset charset = Charset.forName(charset_name);
+    final int size_per_char = (int)charset.newEncoder().maxBytesPerChar();
+
+    int total_size = 0;
+
+    for(IEnvironmentVariable e : env) {
+      total_size += e.getName().length() * size_per_char;
+      total_size += size_per_char; //=
+      total_size += e.getValue().length() * size_per_char;
+      total_size += terminator.length * 2; //terminating null
+    }
+    total_size += terminator.length * 2; //ending terminating null
+    //if ("ASCII".equals(charset_name) && total_size > MAX_ANSI_ENVIRONMENT_BLOCK_SIZE) {
+    //  throw new IllegalStateException("The total size of the entire environment variable block cannot exceed " + MAX_ANSI_ENVIRONMENT_BLOCK_SIZE + " bytes");
+    //}
+
+    ByteBuffer bb = ByteBuffer.allocate(total_size);// + 100);
+    ByteBuffer var;
+    for(IEnvironmentVariable e : env) {
+      var = charset.encode(e.getName() + "=" + e.getValue());
+      bb.put(var);
+      bb.put(terminator);
+    }
+
+    //bb.put(charset.encode("" + '\0'));
+    bb.put(terminator);
+    bb.put(terminator);
+    //bb.putInt(-1);bb.putInt(-1);bb.putInt(-1);bb.putInt(-1);
+    //bb.compact();
+    bb.flip();
+
+
+    return bb;
   }
 
   @SuppressWarnings("all")

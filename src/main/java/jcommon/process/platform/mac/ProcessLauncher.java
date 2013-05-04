@@ -22,6 +22,7 @@ package jcommon.process.platform.mac;
 import jcommon.core.platform.IPlatformImplementation;
 import jcommon.core.platform.mac.MacPlatformProvider;
 import jcommon.process.IEnvironmentVariable;
+import jcommon.process.IEnvironmentVariableBlock;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.platform.IProcessLauncher;
@@ -37,7 +38,12 @@ public final class ProcessLauncher extends MacPlatformProvider implements IProce
   }
 
   @Override
-  public IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] command_line, final IProcessListener[] listeners) {
+  public IEnvironmentVariableBlock requestParentEnvironmentVariableBlock() {
+    return null;
+  }
+
+  @Override
+  public IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] command_line, final IProcessListener[] listeners) {
     return IProcessLauncher.DEFAULT.launch(inherit_parent_environment, environment_variables, command_line, listeners);
   }
 }

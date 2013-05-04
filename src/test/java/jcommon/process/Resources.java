@@ -41,6 +41,8 @@ public class Resources {
     , STDERR_ECHO_REPEAT = pathForResource("stderr-echo-repeat")
     , STDOUT_ECHO_REPEAT = pathForResource("stdout-echo-repeat")
     , STDOUT_STDERR_ECHO_REPEAT = pathForResource("stdout-stderr-echo-repeat")
+
+    , ENV_VAR_ECHO = pathForResource("env-var-echo")
   ;
 
   public static String[] ALL = new String[] {

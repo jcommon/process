@@ -35,8 +35,19 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("unchecked")
 public class ProcessTest {
-  final int times = 2;
+  final int times = 100;
   final int message_count = 10;
+
+  final ProcessBuilder builder_env_var_echo = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
+      .andArgument("/c")
+      .andArgument(Resources.ENV_VAR_ECHO)
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
 
   final ProcessBuilder builder_stdin_1 = ProcessBuilder.create()
     .withExecutable(Resources.STDIN_1)
@@ -76,7 +87,7 @@ public class ProcessTest {
       .andArgument(Integer.toString(message_count))
       .withListener(
           StandardStreamPipe.create()
-          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdOut(StandardStream.StdErr)
           //.redirectStdErr(StandardStream.Null)
       )
   ;
@@ -122,6 +133,58 @@ public class ProcessTest {
   }
 
   @Test
+  public void testEnvVarCoalescing() throws Throwable {
+    final EnvironmentVariableBlockBuilder builder = new EnvironmentVariableBlockBuilder();
+    builder.addEnvironmentVariable("E1", "V1");
+    builder.addEnvironmentVariable("E2", "V2");
+    builder.addEnvironmentVariable("E3", "V3");
+
+    final EnvironmentVariableBlockBuilder original = builder.copy();
+
+    final IEnvironmentVariableBlock block_1 = builder.toEnvironmentVariableBlock();
+
+    assertEquals("V1", block_1.get("E1"));
+    assertEquals("V2", block_1.get("E2"));
+    assertEquals("V3", block_1.get("E3"));
+
+    builder.clear();
+    builder.addEnvironmentVariable("E2", "V2-Ammended");
+
+    final IEnvironmentVariableBlock block_2 = builder.toEnvironmentVariableBlock();
+
+    assertEquals("V1", block_1.get("E1"));
+    assertEquals("V2", block_1.get("E2"));
+    assertEquals("V3", block_1.get("E3"));
+
+    //Other values are gone b/c we cleared them earlier in the test.
+    assertEquals("V2-Ammended", block_2.get("E2"));
+
+    final IEnvironmentVariableBlock coalesced_block_1 = original.toCoalescedEnvironmentVariableBlock(block_2);
+    assertEquals("V1", coalesced_block_1.get("E1"));
+    assertEquals("V2", coalesced_block_1.get("E2")); //Might seem confusing -- the original's values take precedence over what's passed in (not the other way around).
+    assertEquals("V3", coalesced_block_1.get("E3"));
+  }
+
+  @Test
+  public void testEnvVars() throws Throwable {
+    //Creates environment variables and tests that they're being properly passed to the executable.
+    final ProcessBuilder proc_builder = builder_env_var_echo.copy();
+    for(int i = 0; i < 2; ++i) {
+      String variable_name = "TEST_" + (i + 1);
+      String variable_value = "VALUE_" + (i + 1);
+
+      proc_builder
+        .addEnvironmentVariable(variable_name, variable_value)
+        .addArgument(variable_name)
+      ;
+    }
+
+    proc_builder.addArgument("PATH");
+
+    proc_builder.start().await();
+  }
+
+  //@Test
   public void testStdIn() throws Throwable {
     //Test processes in succession.
 
@@ -178,7 +241,7 @@ public class ProcessTest {
     }
   }
 
-  @Test
+  //@Test
   public void testLaunchProcess() throws Throwable {
 //    for(int i = 45; i >= 0; --i) {
 //      System.err.println(i + "...");

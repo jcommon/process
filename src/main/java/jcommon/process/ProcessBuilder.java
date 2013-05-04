@@ -33,16 +33,30 @@ import java.util.*;
 @SuppressWarnings("unused")
 public class ProcessBuilder implements Cloneable {
   private static final IProcessLauncher impl = PlatformProviders.find(IProcessLauncher.class, IProcessLauncher.DEFAULT);
+  private static IEnvironmentVariableBlock cached_parent_environment;
+
+  private IEnvironmentVariableBlock parent_environment;
   private boolean inherit_parent_environment = true;
   private String executable = StringUtil.empty;
   private List<String> arguments = new LinkedList<String>();
-  private Map<String, String> env = new LinkedHashMap<String, String>(2, 1.0f);
+  private EnvironmentVariableBlockBuilder env = new EnvironmentVariableBlockBuilder();
   private List<IProcessListener> listeners = new LinkedList<IProcessListener>();
 
   /**
    * Prevent outside instantiation of {@link ProcessBuilder} instances.
    */
   private ProcessBuilder() {
+    this.parent_environment = cached_parent_environment;
+  }
+
+  static {
+    refreshCachedParentEnvironmentVariableBlock();
+  }
+
+  public static void refreshCachedParentEnvironmentVariableBlock() {
+    synchronized (ProcessBuilder.class) {
+      cached_parent_environment = impl.requestParentEnvironmentVariableBlock();
+    }
   }
 
   /**
@@ -61,10 +75,11 @@ public class ProcessBuilder implements Cloneable {
   public ProcessBuilder copy() {
     final ProcessBuilder builder = new ProcessBuilder();
     builder.inherit_parent_environment = inherit_parent_environment;
+    builder.parent_environment = parent_environment;
     builder.executable = executable;
+    builder.env = env.copy();
     builder.arguments.addAll(arguments);
     builder.listeners.addAll(listeners);
-    builder.env.putAll(env);
     return builder;
   }
 
@@ -101,6 +116,17 @@ public class ProcessBuilder implements Cloneable {
    */
   public boolean isParentEnvironmentInherited() {
     return this.inherit_parent_environment;
+  }
+
+  /**
+   * Provides an instance of {@link IEnvironmentVariableBlock} representing multiple
+   * environment variables defined for the current process that will be used when this
+   * child process runs.
+   *
+   * @return An instance of {@link IEnvironmentVariableBlock}.
+   */
+  public IEnvironmentVariableBlock getParentEnvironmentVariableBlock() {
+    return parent_environment;
   }
 
   /**
@@ -147,27 +173,37 @@ public class ProcessBuilder implements Cloneable {
    * @return An unmodifiable {@link Map} containing the list of currently set environment
    *         variables.
    */
-  public Map<String, String> getEnvironmentVariableMap() {
-    return Collections.unmodifiableMap(env);
+  public Map<String, String> produceEnvironmentVariableMap() {
+    final Map<String, String> vars = new LinkedHashMap<String, String>(10, 0.8f);
+    env.coalescedView(getParentEnvironmentVariableBlock(), new EnvironmentVariableBlockBuilder.IVisitor() {
+      @Override
+      public boolean visit(String name, String value) {
+        vars.put(name, value);
+        return true;
+      }
+    });
+    return Collections.unmodifiableMap(vars);
   }
 
   /**
    * Returns an array of {@link IEnvironmentVariable} instances representing environment
    * variables (their name and value) that will be provided to the child process upon creation.
    *
-   * @return An array of {@link IEnvironmentVariable} instances representing the list of
+   * @return An unmodifiable {@link Set} of {@link IEnvironmentVariable} instances representing the list of
    *         currently set environment variables.
    */
-  public IEnvironmentVariable[] getEnvironmentVariables() {
-    final Set<Map.Entry<String, String>> vars = env.entrySet();
-    final IEnvironmentVariable[] env_vars = new IEnvironmentVariable[vars.size()];
+  public Set<IEnvironmentVariable> getEnvironmentVariables() {
+    final Set<IEnvironmentVariable> vars = new LinkedHashSet<IEnvironmentVariable>(10, 0.8f);
 
-    int i = 0;
-    for(Map.Entry<String, String> var : vars) {
-      env_vars[i] = new EnvironmentVariable(var.getKey(), var.getValue());
-      ++i;
-    }
-    return env_vars;
+    env.coalescedView(getParentEnvironmentVariableBlock(), new EnvironmentVariableBlockBuilder.IVisitor() {
+      @Override
+      public boolean visit(String name, String value) {
+        vars.add(new EnvironmentVariable(name, value));
+        return true;
+      }
+    });
+
+    return Collections.unmodifiableSet(vars);
   }
 
   /**
@@ -313,7 +349,7 @@ public class ProcessBuilder implements Cloneable {
       throw new IllegalArgumentException("value cannot be null");
     }
 
-    this.env.put(name, value);
+    this.env.addEnvironmentVariable(name, value);
     return this;
   }
 
@@ -371,6 +407,7 @@ public class ProcessBuilder implements Cloneable {
    * @return This instance of {@link ProcessBuilder}.
    */
   public ProcessBuilder clearEnvironmentVariables() {
+    this.parent_environment = null;
     this.env.clear();
     return this;
   }
@@ -385,6 +422,7 @@ public class ProcessBuilder implements Cloneable {
    */
   public ProcessBuilder inheritParentEnvironment(final boolean inherit) {
     this.inherit_parent_environment = inherit;
+    this.parent_environment = (inherit ? cached_parent_environment : null);
     return this;
   }
 
@@ -450,51 +488,6 @@ public class ProcessBuilder implements Cloneable {
       throw new IllegalStateException("executable must be set before launching a child process");
     }
 
-    return impl.launch(inherit_parent_environment, getEnvironmentVariables(), getCommandLine(), getListeners());
-  }
-
-  private static class EnvironmentVariable implements IEnvironmentVariable {
-    private final String name;
-    private final String value;
-
-    public EnvironmentVariable(final String name, final String value) {
-      this.name = name;
-      this.value = value;
-    }
-
-    @Override
-    public String getName() {
-      return name;
-    }
-
-    @Override
-    public String getValue() {
-      return value;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) return true;
-      if (o == null || getClass() != o.getClass()) return false;
-
-      EnvironmentVariable that = (EnvironmentVariable) o;
-
-      if (!name.equals(that.name)) return false;
-      if (!value.equals(that.value)) return false;
-
-      return true;
-    }
-
-    @Override
-    public int hashCode() {
-      int result = name.hashCode();
-      result = 31 * result + value.hashCode();
-      return result;
-    }
-
-    @Override
-    public String toString() {
-      return "{" + name + ": " + value + "}";
-    }
+    return impl.launch(inherit_parent_environment, env.toCoalescedEnvironmentVariableBlock(getParentEnvironmentVariableBlock()), getCommandLine(), getListeners());
   }
 }

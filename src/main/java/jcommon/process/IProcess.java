@@ -53,14 +53,16 @@ public interface IProcess {
    */
   boolean isParentEnvironmentInherited();
 
+  //IEnvironmentVariableBlock getParentEnvironmentVariables();
+
   /**
-   * Returns an array of {@link IEnvironmentVariable} instances representing environment
+   * Returns an instance of {@link IEnvironmentVariableBlock} representing environment
    * variables (their name and value) that will be provided to the child process upon creation.
    *
-   * @return An array of {@link IEnvironmentVariable} instances representing the list of
+   * @return An instance of {@link IEnvironmentVariableBlock} instances representing the list of
    *         currently set environment variables.
    */
-  IEnvironmentVariable[] getEnvironmentVariables();
+  IEnvironmentVariableBlock getEnvironmentVariables();
 
   /**
    * Returns an array of {@link IProcessListener} instances who are interested in events
