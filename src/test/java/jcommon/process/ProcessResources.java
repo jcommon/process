@@ -63,6 +63,17 @@ public class ProcessResources {
       )
   ;
 
+  private static final ProcessBuilder windows_builder_env_var_echo = ProcessBuilder.create()
+    .withExecutable("cmd.exe")
+      .andArgument("/c")
+      .andArgument(Resources.ENV_VAR_ECHO)
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
+
   private static final ProcessBuilder windows_builder_stdout_echo_repeat = ProcessBuilder.create()
     .withExecutable("cmd.exe")
       .andArgument("/c")
@@ -134,10 +145,17 @@ public class ProcessResources {
       )
   ;
 
+  private static final ProcessBuilder unix_builder_env_var_echo = ProcessBuilder.create()
+    .withExecutable(Resources.ENV_VAR_ECHO)
+      .withListener(
+          StandardStreamPipe.create()
+          //.redirectStdOut(StandardStream.Null)
+          //.redirectStdErr(StandardStream.Null)
+      )
+  ;
+
   private static final ProcessBuilder unix_builder_stdout_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDOUT_ECHO_REPEAT)
+    .withExecutable(Resources.STDOUT_ECHO_REPEAT)
       .andArgument(Integer.toString(STANDARD_MESSAGE_COUNT))
       .withListener(
           StandardStreamPipe.create()
@@ -145,9 +163,7 @@ public class ProcessResources {
   ;
 
   private static final ProcessBuilder unix_builder_stderr_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDERR_ECHO_REPEAT)
+    .withExecutable(Resources.STDERR_ECHO_REPEAT)
       .andArgument(Integer.toString(STANDARD_MESSAGE_COUNT))
       .withListener(
           StandardStreamPipe.create()
@@ -155,9 +171,7 @@ public class ProcessResources {
   ;
 
   private static final ProcessBuilder unix_builder_stdout_stderr_echo_repeat = ProcessBuilder.create()
-    .withExecutable("cmd.exe")
-      .andArgument("/c")
-      .andArgument(Resources.STDOUT_STDERR_ECHO_REPEAT)
+    .withExecutable(Resources.STDOUT_STDERR_ECHO_REPEAT)
       .andArgument(Integer.toString(STANDARD_MESSAGE_COUNT))
       .withListener(
           StandardStreamPipe.create()
@@ -168,6 +182,8 @@ public class ProcessResources {
       STDIN_1
     , STDERR_1
     , STDOUT_1
+
+    , ENV_VAR_ECHO
 
     , STDERR_ECHO_REPEAT
     , STDOUT_ECHO_REPEAT
@@ -183,6 +199,8 @@ public class ProcessResources {
         STDERR_1 = windows_builder_stderr_1;
         STDOUT_1 = windows_builder_stdout_1;
 
+        ENV_VAR_ECHO = windows_builder_env_var_echo;
+
         STDERR_ECHO_REPEAT = windows_builder_stderr_echo_repeat;
         STDOUT_ECHO_REPEAT = windows_builder_stdout_echo_repeat;
         STDOUT_STDERR_ECHO_REPEAT = windows_builder_stdout_stderr_echo_repeat;
@@ -191,6 +209,8 @@ public class ProcessResources {
         STDIN_1 = unix_builder_stdin_1;
         STDERR_1 = unix_builder_stderr_1;
         STDOUT_1 = unix_builder_stdout_1;
+
+        ENV_VAR_ECHO = unix_builder_env_var_echo;
 
         STDERR_ECHO_REPEAT = unix_builder_stderr_echo_repeat;
         STDOUT_ECHO_REPEAT = unix_builder_stdout_echo_repeat;
