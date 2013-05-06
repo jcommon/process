@@ -29,6 +29,16 @@ import java.util.List;
 
 /**
  *
+ * http://code.activestate.com/recipes/576759-subprocess-with-async-io-pipes-class/
+ * http://linux.die.net/man/3/posix_spawn
+ * http://unix.derkeiler.com/Newsgroups/comp.unix.programmer/2009-02/msg00222.html
+ * https://bitbucket.org/burtonator/peregrine/src/854f608b7f4b0510d088b3a6d558db478cdd473c/src/java/peregrine/os/unistd.java
+ * https://github.com/axiak/java_posix_spawn/blob/master/src/c/jlinuxfork.c
+ * http://pubs.opengroup.org/onlinepubs/009695399/functions/posix_spawn.html
+ * http://skife.org/java/2012/01/24/java_daemonization_with_gressil.html
+ * https://kenai.com/projects/jna-posix/sources/mercurial/content/src/org/jruby/ext/posix/LibC.java?rev=59
+ * https://github.com/bxm156/java_posix_spawn
+ * http://bryanmarty.com/blog/2012/01/14/forking-jvm/
  */
 public class C {
   private static final String LIB = "c";
