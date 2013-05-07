@@ -39,7 +39,6 @@ public class ProcessTest {
 
   @BeforeClass
   public static void before() {
-    assertTrue(Resources.loadAllResources());
   }
 
   private static int countNewLines(ByteBuffer buffer) {

@@ -23,7 +23,9 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 import com.sun.jna.Union;
+import com.sun.jna.ptr.IntByReference;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 
@@ -44,7 +46,7 @@ public class C {
   private static final String LIB = "c";
 
   static {
-    //Native.register(LIB);
+    Native.register(LIB);
   }
 
   /*
@@ -227,6 +229,8 @@ public class C {
 
    */
 
+  public static native int close(int fd);
+
   //extern int epoll_create (int __size) __THROW;
   public static native int epoll_create(int size);
 
@@ -242,6 +246,10 @@ public class C {
 
   //extern int epoll_pwait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
   public static native int epoll_pwait(int epfd, epoll_event.ByReference events, int maxevents, int timeout, Pointer ss);
+
+  //int posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
+  //int posix_spawnp(pid_t *restrict pid, const char *restrict file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char * const envp[restrict]);
+  public static native int posix_spawn(IntByReference pid, String path, Pointer fileActions, Pointer attr, ByteBuffer argv, ByteBuffer envp);
 }
 
 /*
