@@ -103,7 +103,7 @@ public class ProcessTest {
     proc_builder.start().await();
   }
 
-  //@Test
+  @Test
   public void testStdIn() throws Throwable {
     //Test processes in succession.
 
@@ -160,7 +160,7 @@ public class ProcessTest {
     }
   }
 
-  //@Test
+  @Test
   public void testLaunchProcess() throws Throwable {
 //    for(int i = 45; i >= 0; --i) {
 //      System.err.println(i + "...");

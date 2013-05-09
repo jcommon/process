@@ -478,6 +478,8 @@ public class Win32ProcessLauncherIOCP {
 
     final STARTUPINFO startup_info = new STARTUPINFO();
     final PROCESS_INFORMATION.ByReference proc_info = new PROCESS_INFORMATION.ByReference();
+    //final Memory lpReserved2 = new Memory(4L);
+    //lpReserved2.setInt(0L, 0);
 
     startup_info.lpReserved       = null;
     startup_info.lpDesktop        = null;
@@ -491,8 +493,8 @@ public class Win32ProcessLauncherIOCP {
     startup_info.dwFillAttribute  = new DWORD(0); /* initial text and background colors for a console window, only used if STARTF_USEFILLATTRIBUTE is specified */
     startup_info.dwFlags         |= STARTF_USESTDHANDLES;
     startup_info.wShowWindow      = new WORD(0);
-    startup_info.cbReserved2      = new WORD(0);
-    startup_info.lpReserved2      = null;
+    startup_info.cbReserved2      = new WORD(0); //new WORD(lpReserved2.size());
+    startup_info.lpReserved2      = null; //lpReserved2;
     startup_info.hStdInput        = stdin_child_process_read;
     startup_info.hStdOutput       = stdout_child_process_write;
 //    startup_info.hStdError        = GetStdHandle(STD_ERROR_HANDLE);

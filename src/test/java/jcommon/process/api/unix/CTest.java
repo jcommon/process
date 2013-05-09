@@ -19,6 +19,7 @@
 
 package jcommon.process.api.unix;
 
+import jcommon.core.OSFamily;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -34,6 +35,15 @@ public class CTest {
 
   @Test
   public void testBasicLibraryLoad() throws Throwable {
+    //jcommon.process.ProcessBuilder.create("notepad").start().await();
+    //jcommon.process.ProcessBuilder.create("C:\\Program Files (x86)\\Internet Explorer\\iexplore.exe").start().await();
+    //jcommon.process.ProcessBuilder.create("C:\\Program Files (x86)\\Bitvise SSH Client\\BvSsh.exe").start().await();
+    //jcommon.process.ProcessBuilder.create("C:\\Program Files\\Internet Explorer\\iexplore.exe", "http://www.yahoo.com/").start().await();
+    //jcommon.process.ProcessBuilder.create("C:\\Progra~2\\Intern~1\\IEXPLORE.EXE", "http://www.yahoo.com/").start().await();
+    //Runtime.getRuntime().exec("C:\\Progra~1\\Intern~1\\IEXPLORE.EXE").waitFor();
+    if (OSFamily.getSystemOSFamily() == OSFamily.Windows)
+      return;
+
     final int fd = C.epoll_create(1);
     assertTrue(fd > 0);
     assertTrue(C.close(fd) == 0);
