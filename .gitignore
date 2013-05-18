@@ -2,6 +2,7 @@
 
 .idea/workspace.xml
 
+dependencies/
 target/
 
 release.properties
