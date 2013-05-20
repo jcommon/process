@@ -1,5 +1,9 @@
 #!/bin/sh -e
 
+#Not really used -- was initially for building musl's libc and
+#for creating the musl gcc wrapper. musl-cross is a better
+#solution, however, making this obsolete.
+
 CURR_DIR=`pwd`
 TOP=$(dirname $0)/.
 ROOT=$( (cd "$TOP" && pwd) )
@@ -9,7 +13,7 @@ FILE=$VERSION.tar.gz
 URI=http://www.musl-libc.org/releases/$FILE
 
 BUILD_DIR=/tmp/build
-INSTALL_DIR=$ROOT/dependencies/native/unix
+INSTALL_DIR=$ROOT/opt/native/unix
 
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BUILD_DIR"
@@ -22,11 +26,11 @@ test -d "$VERSION" || tar xzvf "$FILE"
 
 cd "$VERSION"
 make distclean
-CC='gcc -m32' ./configure --prefix="$INSTALL_DIR/x86" --target=i586
-make install
+CC='gcc -m32' LDFLAGS='-m32' ./configure --prefix="$INSTALL_DIR/x86" --target=i586 --disable-shared
+sudo make install
 
 make distclean
-CC='gcc -m64' ./configure --prefix="$INSTALL_DIR/x86_64" --target=x86_64
+CC='gcc -m64' LDFLAGS='-m64' ./configure --prefix="$INSTALL_DIR/x86_64" --target=x86_64 --disable-shared
 make install
 
 

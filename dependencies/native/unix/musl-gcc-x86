@@ -1,8 +1,0 @@
-#!/bin/sh
-
-TOP=$(dirname $0)/.
-ROOT=$( (cd "$TOP" && pwd) )
-
-INSTALL_DIR=$ROOT/x86
-
-exec "${REALGCC:-gcc}" "$@" -specs "$INSTALL_DIR/lib/musl-gcc.specs"

@@ -4,6 +4,7 @@
 
 dependencies/
 target/
+opt/
 
 release.properties
 *.releaseBackup

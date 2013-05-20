@@ -8,7 +8,7 @@ BIN_DIR=$ROOT/src/main/resources/native/unix
 SRC_DIR=$ROOT/src/main/c
 OBJ_DIR=$ROOT/target/objs
 
-DEPENDENCIES_DIR=$ROOT/dependencies/native/unix
+OPT_DIR=$ROOT/opt/native/unix
 
 build_full() {
   gcc=$1
@@ -23,13 +23,13 @@ build_full() {
 
   echo Building $exe...
 
-  echo "$gcc" $compile_options -I"$SRC_DIR" -o "$OBJ_DIR/$obj" -c "$SRC_DIR/$src"
-  echo "$gcc" $link_options -o "$BIN_DIR/$exe" "$OBJ_DIR/$obj"
+  "$gcc" $compile_options -I"$SRC_DIR" -o "$OBJ_DIR/$obj" -c "$SRC_DIR/$src"
+  "$gcc" $link_options -o "$BIN_DIR/$exe" "$OBJ_DIR/$obj"
 }
 
 build() {
   name=$1
-  build_full $DEPENDENCIES_DIR/musl-gcc-x86_64 "-m64 -static -Os" "" x86_64/${name} ${name}.o ${name}.c
+  build_full $DEPENDENCIES_DIR/musl-gcc-x86_64 "-m64 -static -Os" "-m64" x86_64/${name} ${name}.o ${name}.c
   build_full $DEPENDENCIES_DIR/musl-gcc-x86 "-m32 -static -Os" "-m32" x86/${name} ${name}.o ${name}.c
 }
 
