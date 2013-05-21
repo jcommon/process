@@ -1,50 +1,66 @@
 #!/bin/sh -e
 
+#To determine the musl version used, please see build-native-musl-cross.sh
+
 CURR_DIR=`pwd`
 TOP=$(dirname $0)/.
 ROOT=$( (cd "$TOP" && pwd) )
 
-BIN_DIR=$ROOT/src/main/resources/native/unix
-SRC_DIR=$ROOT/src/main/c
-OBJ_DIR=$ROOT/target/objs
+OBJ_DIR=/tmp/build/jcommon-process
 
 OPT_DIR=$ROOT/opt/native/unix
+SRC_DIR=$ROOT/src/main/c
+OUTPUT_DIR=$ROOT/src/main/resources/native/unix
 
-build_full() {
-  gcc=$1
-  compile_options=$2
-  link_options=$3
-  exe=$4
-  obj=$5
-  src=$6
 
-  exedir=$(dirname $exe)
-  mkdir -p "$BIN_DIR/$exedir"
-
-  echo Building $exe...
-
-  "$gcc" $compile_options -I"$SRC_DIR" -o "$OBJ_DIR/$obj" -c "$SRC_DIR/$src"
-  "$gcc" $link_options -o "$BIN_DIR/$exe" "$OBJ_DIR/$obj"
-}
 
 build() {
-  name=$1
-  build_full $DEPENDENCIES_DIR/musl-gcc-x86_64 "-m64 -static -Os" "-m64" x86_64/${name} ${name}.o ${name}.c
-  build_full $DEPENDENCIES_DIR/musl-gcc-x86 "-m32 -static -Os" "-m32" x86/${name} ${name}.o ${name}.c
+  arch=$1
+  cross_gcc=$2
+  name=$3
+
+  obj_base=$OBJ_DIR/$arch
+  output_base=$OUTPUT_DIR/$arch/bin
+  src=$SRC_DIR/$name.c
+  obj=$obj_base/$name.o
+  out=$output_base/$name
+
+  mkdir -p "$obj_base"
+  mkdir -p "$output_base"
+
+  gcc=$OPT_DIR/$cross_gcc/bin/${cross_gcc}-gcc
+
+  "$gcc" -Os -I"$SRC_DIR" -o "$obj" -c "$src"
+  "$gcc" -static -static-libgcc -o "$out" "$obj"
 }
 
-cd "$ROOT"
+build_for_all_architectures() {
+  name=$1
 
-#setup
-mkdir -p $BIN_DIR
-mkdir -p $OBJ_DIR
+  echo Building ${name}...
+
+  build x86 i686-linux-musl $name
+  build x86_64 x86_64-linux-musl $name
+}
+
+#Ensure that we've unpacked the cross compilers.
+cd "$OPT_DIR"
+for a in i686 x86_64
+do
+  dest_dir=${a}-linux-musl
+  tar_file=${a}-linux-musl.tar.xz
+  echo Unpacking ${tar_file}...
+
+  test -d "$dest_dir" || tar Jxvf "$tar_file"
+done
+
+#Clean things up first.
+rm -rf "$OBJ_DIR"
+
+#Build the necessary processes for all supported architectures.
+build_for_all_architectures spawn
 
 
-#build_all
-build spawn
-echo Build complete.
 
-
-#done
 cd "$CURR_DIR"
 
