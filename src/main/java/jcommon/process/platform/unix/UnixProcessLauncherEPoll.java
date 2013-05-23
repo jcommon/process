@@ -72,8 +72,10 @@ public class UnixProcessLauncherEPoll {
 
     //expects a SIGINT to be sent
     int pid = ptr_pid.getValue();
-
+    String queue_name = "/FC94525A-FB42-4BA1-9D8E-A0CA72033751/" + getpid() +"/" + pid;
     System.out.println("PID: " + pid);
+    System.out.println("MSG QUEUE NAME: " + queue_name);
+
 
     //Allow the child process to run execve() and begin doing real work.
     check(kill(pid, SIGINT));

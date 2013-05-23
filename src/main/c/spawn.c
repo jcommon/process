@@ -3,6 +3,9 @@
 #include <semaphore.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <mqueue.h>
+
+#define QUEUE_NAME "/FC94525A-FB42-4BA1-9D8E-A0CA72033751/%d/%d"
 
 #define DEBUG(format, ...)                                                          \
   {                                                                                 \
@@ -13,14 +16,16 @@
 #define ERROR -1
 #define SUCCESS 0
 
-static sem_t sem;
-static volatile bool signal_received = false;
+#define BUFFER_SIZE 1024
 
 #define SIGNAL_TO_RESUME SIGINT
 #define HANDLED_SIGNALS_SIZE 1
 static int HANDLED_SIGNALS[] = {
   SIGINT
 };
+
+static sem_t sem;
+static volatile bool signal_received = false;
 
 static void sighandler(int signum, siginfo_t *info, void *ptr) {
   DEBUG("Received signal from %d: %d\n", info->si_pid, signum);
@@ -48,13 +53,37 @@ int main(int argc, const char *argv[]) {
   //to launch this process, so it should have effectively already
   //forked (vforked if possible).
 
+  char queue_name[128];
   struct sigaction act;
-  int s, i, ret;
+  int s, i, queue_name_size, ret;
+  mqd_t queue_handle;
+  struct mq_attr msgq_attr;
+  ssize_t bytes_read;
+  char buffer[BUFFER_SIZE];
 
+  //Clear the buffer.
+  memset (buffer, 0, BUFFER_SIZE);
+
+  //Formulate the queue name which is a GUID + the parent PID + the child PID.
+  queue_name_size = 1 + snprintf(queue_name, 128, QUEUE_NAME, getppid(), getpid());
+
+  DEBUG("QUEUE: %s\n", queue_name);
   DEBUG("Parent PID: %d\n", getppid());
   DEBUG("PID: %d\n", getpid());
 
-  sleep(10);
+  //Unlink the queue if it exists.
+  mq_unlink(queue_name);
+
+  //Open the message queue.
+  queue_handle = mq_open(queue_name, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG, NULL);
+  if (-1 == queue_handle) {
+    return ERROR;
+  }
+
+  bytes_read = mq_receive(queue_handle, )
+
+  //Still have an issue if the signal is sent before we have the chance
+  //to register our signal handler.
 
   DEBUG("AFTER SLEEP 1\n");
 

@@ -475,6 +475,8 @@ public class C {
     return status == 0xffff;
   }
 
+  public static native int getpid();
+
   public static native int kill(int pid, int sig);
   public static native int waitpid(int pid, IntByReference status, int options);
 
