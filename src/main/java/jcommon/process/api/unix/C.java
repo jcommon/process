@@ -19,10 +19,7 @@
 
 package jcommon.process.api.unix;
 
-import com.sun.jna.Native;
-import com.sun.jna.Pointer;
-import com.sun.jna.Structure;
-import com.sun.jna.Union;
+import com.sun.jna.*;
 import com.sun.jna.ptr.IntByReference;
 
 import java.nio.ByteBuffer;
@@ -247,9 +244,253 @@ public class C {
   //extern int epoll_pwait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
   public static native int epoll_pwait(int epfd, epoll_event.ByReference events, int maxevents, int timeout, Pointer ss);
 
+
+  /*
+  /.* Data structure to contain information about the actions to be
+   performed in the new process with respect to file descriptors.  *./
+  typedef struct
+  {
+    int __allocated;
+    int __used;
+    struct __spawn_action *__actions;
+    int __pad[16];
+  } posix_spawn_file_actions_t;
+  */
+  public static class posix_spawn_file_actions_t extends Structure {
+    public int __allocated;
+    public int __used;
+    public Pointer __actions;
+    public int[] __pad = new int[16];
+
+    protected List getFieldOrder() {
+      return Arrays.asList("__allocated", "__used", "__actions", "__pad");
+    }
+
+    public posix_spawn_file_actions_t() {
+      super();
+    }
+
+    public static class ByReference extends posix_spawn_file_actions_t implements Structure.ByReference {
+
+    }
+
+    public static class ByValue extends posix_spawn_file_actions_t implements Structure.ByValue {
+
+    }
+  }
+
+  /*
+    # define _SIGSET_NWORDS	(1024 / (8 * sizeof (unsigned long int)))
+    typedef struct
+    {
+      unsigned long int __val[_SIGSET_NWORDS];
+    } __sigset_t;
+   */
+  public static final int _SIGSET_NWORDS = (1024 / (8 * NativeLong.SIZE));
+  public static class sigset_t extends Structure {
+    public NativeLong[] __val = new NativeLong[_SIGSET_NWORDS];
+
+    protected List getFieldOrder() {
+      return Arrays.asList("__val");
+    }
+
+    public sigset_t() {
+      super();
+    }
+  }
+
+  /*
+    struct sched_param
+    {
+      int __sched_priority;
+    };
+   */
+  public static class sched_param extends Structure {
+    public int __sched_priority;
+
+    protected List getFieldOrder() {
+      return Arrays.asList("__sched_priority");
+    }
+
+    public sched_param() {
+      super();
+    }
+  }
+
+  /*
+    //Data structure to contain attributes for thread creation.
+    typedef struct
+    {
+      short int __flags;
+      pid_t __pgrp;
+      sigset_t __sd;
+      sigset_t __ss;
+      struct sched_param __sp;
+      int __policy;
+      int __pad[16];
+    } posix_spawnattr_t;
+  */
+  public static class posix_spawnattr_t extends Structure {
+    public short __flags;
+    public int __pgrp;
+    public sigset_t __sd;
+    public sigset_t __ss;
+    public sched_param __sp;
+    public int __policy;
+    public int[] __pad = new int[16];
+
+    protected List getFieldOrder() {
+      return Arrays.asList("__flags", "__pgrp", "__sd", "__ss", "__sp", "__policy", "__pad");
+    }
+
+    public posix_spawnattr_t() {
+      super();
+    }
+
+    public static class ByReference extends posix_spawnattr_t implements Structure.ByReference {
+
+    }
+
+    public static class ByValue extends posix_spawnattr_t implements Structure.ByValue {
+
+    }
+  }
+
+  public static final int
+      S_IRWXU = 0000700
+    , S_IRUSR = 0000400
+    , S_IWUSR = 0000200
+    , S_IXUSR = 0000100
+    , S_IRWXG = 0000070
+    , S_IRGRP = 0000040
+    , S_IWGRP = 0000020
+    , S_IXGRP = 0000010
+    , S_IRWXO = 0000007
+    , S_IROTH = 0000004
+    , S_IWOTH = 0000002
+    , S_IXOTH = 0000001
+    , S_ISUID = 0004000
+    , S_ISGID = 0002000
+    , S_ISVTX = 0001000
+  ;
+
+  public static final int
+      O_RDONLY   = 0x0000
+    , O_WRONLY   = 0x0001
+    , O_RDWR     = 0x0002
+    , O_ACCMODE  = 0x0003
+    , O_NONBLOCK = 0x0004
+    , O_APPEND   = 0x0008
+    , O_SHLOCK   = 0x0010
+    , O_EXLOCK   = 0x0020
+    , O_ASYNC    = 0x0040
+    , O_FSYNC    = 0x0080
+    , O_CREAT    = 0x0200
+    , O_TRUNC    = 0x0400
+    , O_EXCL     = 0x0800
+  ;
+
+  public static final short
+      POSIX_SPAWN_RESETIDS      = 0x01
+    , POSIX_SPAWN_SETPGROUP     = 0x02
+    , POSIX_SPAWN_SETSIGDEF     = 0x04
+    , POSIX_SPAWN_SETSIGMASK    = 0x08
+    , POSIX_SPAWN_SETSCHEDPARAM = 0x10
+    , POSIX_SPAWN_SETSCHEDULER  = 0x20
+    , POSIX_SPAWN_USEVFORK      = 0x40
+  ;
+
+  public static final int
+      SIGHUP		= 1	/* Hangup (POSIX).  */
+    , SIGINT		= 2	/* Interrupt (ANSI).  */
+    , SIGQUIT		= 3	/* Quit (POSIX).  */
+    , SIGILL		= 4	/* Illegal instruction (ANSI).  */
+    , SIGTRAP		= 5	/* Trace trap (POSIX).  */
+    , SIGABRT		= 6	/* Abort (ANSI).  */
+    , SIGIOT		= 6	/* IOT trap (4.2 BSD).  */
+    , SIGBUS		= 7	/* BUS error (4.2 BSD).  */
+    , SIGFPE		= 8	/* Floating-point exception (ANSI).  */
+    , SIGKILL		= 9	/* Kill, unblockable (POSIX).  */
+    , SIGUSR1		= 10	/* User-defined signal 1 (POSIX).  */
+    , SIGSEGV		= 11	/* Segmentation violation (ANSI).  */
+    , SIGUSR2		= 12	/* User-defined signal 2 (POSIX).  */
+    , SIGPIPE		= 13	/* Broken pipe (POSIX).  */
+    , SIGALRM		= 14	/* Alarm clock (POSIX).  */
+    , SIGTERM		= 15	/* Termination (ANSI).  */
+    , SIGSTKFLT	= 16	/* Stack fault.  */
+    , SIGCHLD		= 17	/* Child status has changed (POSIX).  */
+    , SIGCONT		= 18	/* Continue (POSIX).  */
+    , SIGSTOP		= 19	/* Stop, unblockable (POSIX).  */
+    , SIGTSTP		= 20	/* Keyboard stop (POSIX).  */
+    , SIGTTIN		= 21	/* Background read from tty (POSIX).  */
+    , SIGTTOU		= 22	/* Background write to tty (POSIX).  */
+    , SIGURG		= 23	/* Urgent condition on socket (4.2 BSD).  */
+    , SIGXCPU		= 24	/* CPU limit exceeded (4.2 BSD).  */
+    , SIGXFSZ		= 25	/* File size limit exceeded (4.2 BSD).  */
+    , SIGVTALRM	= 26	/* Virtual alarm clock (4.2 BSD).  */
+    , SIGPROF		= 27	/* Profiling alarm clock (4.2 BSD).  */
+    , SIGWINCH	= 28	/* Window size change (4.3 BSD, Sun).  */
+    , SIGPOLL		= 29	/* Pollable event occurred (System V).  */
+    , SIGIO		  = 29	/* I/O now possible (4.2 BSD).  */
+    , SIGPWR		= 30	/* Power failure restart (System V).  */
+    , SIGSYS		= 31	/* Bad system call.  */
+    , SIGUNUSED	= 31
+  ;
+
+  public static final int
+      WNOHANG    = 1
+    , WUNTRACED  = 2
+    , WSTOPPED   = 2
+    , WEXITED    = 4
+    , WCONTINUED = 8
+    , WNOWAIT    = 0x01000000
+    , WNOTHREAD  = 0x20000000
+    , WALL       = 0x40000000
+    , WCLONE     = 0x80000000
+  ;
+
+  //Courtesy http://linux.die.net/include/bits/waitstatus.h
+
+  public static int WEXITSTATUS(int status) {
+    return (status & 0xff00) >> 8;
+  }
+
+  public static int WTERMSIG(int status) {
+    return (status & 0x7f) >> 8;
+  }
+
+  public static boolean WIFEXITED(int status) {
+    return WTERMSIG(status) == 0;
+  }
+
+  public static boolean WIFSIGNALED(int status) {
+    return ((((status & 0x7f) + 1) >> 1) > 0);
+  }
+
+  public static boolean WIFSTOPPED(int status) {
+    return (status & 0xff) == 0x7f;
+  }
+
+  public static boolean WIFCONTINUED(int status) {
+    return status == 0xffff;
+  }
+
+  public static native int kill(int pid, int sig);
+  public static native int waitpid(int pid, IntByReference status, int options);
+
+  public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
+  public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);
+  public static native int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t.ByReference __file_actions, int _fd, String __path, int __oflag, int mode);
+  public static native int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t.ByReference __file_actions, int fildes);
+
+  public static native int posix_spawnattr_init(posix_spawnattr_t.ByReference attr);
+  public static native int posix_spawnattr_destroy(posix_spawnattr_t.ByReference attr);
+  public static native int posix_spawnattr_setflags(posix_spawnattr_t.ByReference attr, short flags);
+
   //int posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
   //int posix_spawnp(pid_t *restrict pid, const char *restrict file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char * const envp[restrict]);
   public static native int posix_spawn(IntByReference pid, String path, Pointer fileActions, Pointer attr, ByteBuffer argv, ByteBuffer envp);
+  public static native int posix_spawnp(IntByReference pid, String file, posix_spawn_file_actions_t.ByReference file_actions, posix_spawnattr_t.ByReference attrp, ByteBuffer argv, ByteBuffer envp);
 }
 
 /*

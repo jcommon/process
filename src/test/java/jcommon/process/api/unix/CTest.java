@@ -20,6 +20,7 @@
 package jcommon.process.api.unix;
 
 import jcommon.core.OSFamily;
+import jcommon.process.platform.unix.UnixProcessLauncherEPoll;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -47,5 +48,7 @@ public class CTest {
     final int fd = C.epoll_create(1);
     assertTrue(fd > 0);
     assertTrue(C.close(fd) == 0);
+
+    UnixProcessLauncherEPoll.launch(false, null, null, null);
   }
 }
