@@ -6,6 +6,8 @@
 #include <semaphore.h>
 #include <stdbool.h>
 
+#define MIN(a,b) ((a) < (b) ? a : b)
+
 #define DEBUG(format, ...)                                                          \
   {                                                                                 \
     fprintf(stderr, format "\n", ## __VA_ARGS__);                                   \
@@ -27,17 +29,6 @@
 #define EXIT_ERROR -1
 #define EXIT_SUCCESS 0
 
-#define BUFFER_SIZE 1024
-
-#define SIGNAL_TO_RESUME SIGINT
-#define HANDLED_SIGNALS_SIZE 1
-static int HANDLED_SIGNALS[] = {
-  SIGINT
-};
-
-static sem_t sem;
-static volatile bool signal_received = false;
-
 static void usage() {
   INFO("Usage: ");
   INFO("  spawn <read pipe fd> <write pipe fd>");
@@ -57,18 +48,58 @@ static bool parse_to_int(const char* value, int* ret) {
   return true;
 }
 
-static void sighandler(int signum, siginfo_t *info, void *ptr) {
-  DEBUG("Received signal from %d: %d\n", info->si_pid, signum);
-  //if (info->si_pid != getppid()) {
-  //  return;
-  //}
-
-  if (signum != SIGNAL_TO_RESUME) {
-    return;
+static bool read_int(const int fd, size_t *value, ssize_t *bytes_read) {
+  *bytes_read = read(fd, value, 4);
+  if (*bytes_read != 4 || *value < 0) {
+    *value = 0;
+    return false;
   }
 
-  signal_received = true;
-  sem_post(&sem);
+  return true;
+}
+
+static bool read_line(const int fd, char **line, size_t *line_len, size_t *line_size) {
+  size_t msg_size;
+  size_t msg_len = 0;
+  ssize_t bytes_read;
+  ssize_t total_read_so_far = 0;
+  char* buffer;
+
+  //Read a message providing the size of the message (line).
+  if (!read_int(fd, &msg_size, &bytes_read)) {
+    ERROR("Error reading line.");
+    *line = NULL;
+    *line_len = 0;
+    *line_size =0;
+    return false;
+  }
+
+  if (msg_size == 0) {
+    INFO("Empty line.");
+    *line = NULL;
+    *line_len = 0;
+    *line_size = 0;
+    return true;
+  }
+
+  //INFO("SIZE IS: %d (%d bytes)", msg_size, bytes_read);
+
+  buffer = (char*)malloc(sizeof(char) * msg_size);
+
+  //Continue reading in bytes until we've read in everything we need to.
+  while((bytes_read = read(fd, buffer + total_read_so_far, MIN(msg_size, 1024))) > 0 && (total_read_so_far += bytes_read) < msg_size)
+    ;
+
+  //Get the length of the string.
+  msg_len = strnlen(buffer, msg_size);
+
+  INFO("Read full line.");
+
+  //Provide this info. to the caller.
+  *line = buffer;
+  *line_len = msg_len;
+  *line_size = msg_size;
+  return true;
 }
 
 int main(int argc, const char *argv[]) {
@@ -84,16 +115,17 @@ int main(int argc, const char *argv[]) {
   //forked (vforked if possible).
 
   int read_fd, write_fd;
-  struct sigaction act;
-  int s, i, ret;
-  ssize_t bytes_read, bytes_written;
-  char buffer[BUFFER_SIZE];
+
+  char *working_directory;
+  size_t line_len, line_size, bytes_read;
+
+  char** child_argv;
+  size_t child_argc;
+  char* arg;
+
+  int i, ret;
 
   //setvbuf(stdout, NULL, _IONBF, 0);
-
-  for(i = 0; i < argc; ++i) {
-    ERROR("%d: %s", i, argv[i]);
-  }
 
   if (argc != 3) {
     ERROR("Invalid arguments.");
@@ -102,24 +134,101 @@ int main(int argc, const char *argv[]) {
   }
 
   if (!parse_to_int(argv[1], &read_fd)) {
-    ERROR("Invalid <read fd>.")
+    ERROR("Invalid <read fd>.");
     usage();
     return EXIT_ERROR;
   }
 
   if (!parse_to_int(argv[2], &write_fd)) {
-    ERROR("Invalid <write fd>.")
+    ERROR("Invalid <write fd>.");
     usage();
     return EXIT_ERROR;
   }
 
-  INFO("READ FD: %d", read_fd);
-  INFO("WRITE FD: %d", write_fd);
+  if (!read_line(read_fd, &working_directory, &line_len, &line_size)) {
+    ERROR("Unable to read the working directory.");
+    goto ERROR;
+  }
 
-  bytes_read = read(read_fd, buffer, BUFFER_SIZE);
+  //If we don't have an empty string, then try and change the directory.
+  if (line_len > 0) {
+    if (chdir(working_directory) != 0) {
+      //There was an error changing the directory.
+      //Ignore for now? If we do that, then the CWD will be the parent process' CWD.
+      //ERROR("Unable to update the current working directory.");
+    }
+  }
 
-  INFO("RECVD: %s (%d bytes)", buffer, bytes_read);
+  if (working_directory != NULL) {
+    free(working_directory);
+  }
 
+  //Time to stream the arguments.
+
+  //Start by reading in the number of expected arguments (argc, effectively).
+  if (!read_int(read_fd, &child_argc, &bytes_read)) {
+    ERROR("Unable to determine the number of arguments.");
+    goto ERROR;
+  }
+
+  if (child_argc <= 0) {
+    ERROR("Expected at least one child argument.");
+    goto ERROR;
+  }
+
+  INFO("Expecting %d arguments.", child_argc);
+
+  child_argv = (char**)malloc(sizeof(char*) * child_argc);
+
+  for(i = 0; i < child_argc; i++) {
+    INFO("Reading argument %d", i);
+    if (!read_line(read_fd, &arg, &line_len, &line_size)) {
+      int so_far = i;
+
+      ERROR("Unable to read an argument.");
+
+      //Free everything up until this point.
+      for(i = 0; i < so_far; ++i) {
+        free(child_argv[i]);
+      }
+
+      //Free the array itself as well.
+      free(child_argv);
+
+      goto ERROR;
+    }
+    child_argv[i] = arg;
+  }
+
+  //Send message to parent process letting them know we're almost
+  //ready to begin execution.
+
+  //Wait for parent to send one last message saying it's now done
+  //processing and that we can begin execution.
+
+  close(read_fd);
+  close(write_fd);
+
+  //This should only return if there was a problem.
+  ret = __execvpe(child_argv[0], child_argv, NULL);
+
+  //Free everything up until this point.
+  for(i = 0; i < child_argc; ++i) {
+    free(child_argv[i]);
+  }
+
+  //Free the array itself as well.
+  free(child_argv);
+
+  return ret;
+
+ERROR:
+  if (working_directory != NULL) {
+    free(working_directory);
+  }
+  close(read_fd);
+  close(write_fd);
+  return EXIT_ERROR;
 
 //
 //  //Clear the buffer.

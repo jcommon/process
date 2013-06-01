@@ -10,12 +10,57 @@ import static jcommon.process.api.JNAUtils.*;
 import static jcommon.process.api.unix.C.*;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.nio.charset.Charset;
 
 public class UnixProcessLauncherEPoll {
   private static void check(int ret) {
     if (ret != 0)
       throw new IllegalStateException("Invalid return value from system call");
+  }
+
+  private static String sanitize_path(String path) {
+    if (path != null)
+      return path.replace("/", "//");
+    else
+      return null;
+  }
+
+  private static String sanitize_value(String value) {
+    if (value != null)
+      return value.replace("/", "//");
+    else
+      return null;
+  }
+
+  private static void write_path(final int write_fd, final String value) {
+    write_line(write_fd, value, true);
+  }
+
+  private static void write_line(final int write_fd, final String value) {
+    write_line(write_fd, value, false);
+  }
+
+  private static void write_int(final int write_fd, final int value) {
+    final ByteBuffer bb = ByteBuffer
+      .allocate(4)
+      .order(ByteOrder.nativeOrder())
+      .putInt(value);
+
+    bb.flip();
+    write(write_fd, bb, bb.limit());
+  }
+
+  private static void write_line(final int write_fd, final String value, final boolean is_path) {
+    final String sanitized = value != null ? (!is_path ? sanitize_value(value) : sanitize_path(value)) + '\0' : null;
+    final ByteBuffer bb = sanitized != null ? Charset.forName("UTF-8").encode(sanitized) : ByteBuffer.allocate(0);
+    final int len = bb.limit();
+
+    write_int(write_fd, len);
+    if (len > 0) {
+      write(write_fd, bb, bb.limit());
+    }
   }
 
   public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
@@ -77,7 +122,7 @@ public class UnixProcessLauncherEPoll {
     //child process, allowing it to continue execution.
     IntByReference ptr_pid = new IntByReference();
     Pointer argv = createPointerToStringArray(false, "/path/to/spawn", str_child_read, str_child_write, null);
-    check(posix_spawnp(ptr_pid, "/work/etc/jcommon/process/src/main/resources/native/unix/x86_64/bin/spawn", file_actions, attr, argv, null));
+    check(posix_spawnp(ptr_pid, "/home/sysadmin/work/jcommon/process/src/main/resources/native/unix/x86_64/bin/spawn", file_actions, attr, argv, null));
     disposeStringArray(argv);
 
     //close(child_read);
@@ -88,7 +133,25 @@ public class UnixProcessLauncherEPoll {
 
     System.out.println("PID: " + pid);
 
-    int written = write(parent_write, Charset.forName("ASCII").encode("HELLO BABY\0"), "HELLO BABY".length());
+    final String working_directory = "/home/sysadmin";
+    final String[] application_args = new String[] {
+        "ls"
+      , "-lah"
+    };
+
+    //Send the working directory.
+    write_path(parent_write, working_directory);
+
+    //Send an int indicating the # of args to expect.
+    write_int(parent_write, application_args.length + 1);
+
+    //Write out each argument.
+    for(String a : application_args) {
+      write_line(parent_write, a);
+    }
+
+    //Add an additional null value.
+    write_line(parent_write, null);
 
 
     //Allow the child process to run execve() and begin doing real work.
