@@ -1,22 +1,16 @@
 package jcommon.process.platform.unix;
 
-import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
-import jcommon.process.api.PinnableMemory;
-import jcommon.process.api.PinnableObject;
-import jcommon.process.api.PinnableStruct;
+
+import static jcommon.process.api.JNAUtils.*;
 import static jcommon.process.api.unix.C.*;
 
 import java.nio.ByteBuffer;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.charset.Charset;
 
 public class UnixProcessLauncherEPoll {
   private static void check(int ret) {
@@ -49,39 +43,62 @@ public class UnixProcessLauncherEPoll {
 //    posix_spawn(..., &file_actions, ...);
 //    posix_spawn_file_actions_destroy(&file_actions);
 
+    final int[] pipe_parent_to_child = new int[2]; //parent write, child read
+    final int[] pipe_child_to_parent = new int[2]; //parent read, child write
+    if (pipe(pipe_parent_to_child) == -1) {
+      throw new IllegalStateException("Unable to create a pipe");
+    }
+
+    if (pipe(pipe_child_to_parent) == -1) {
+      throw new IllegalStateException("Unable to create a pipe");
+    }
+
+    final int parent_read = pipe_child_to_parent[0];
+    final int parent_write = pipe_parent_to_child[1];
+
+    final int child_read = pipe_parent_to_child[0];
+    final int child_write = pipe_child_to_parent[1];
+
+    final String str_child_read = Integer.toString(child_read);
+    final String str_child_write = Integer.toString(child_write);
+
+
     posix_spawnattr_t.ByReference attr = new posix_spawnattr_t.ByReference();
     check(posix_spawnattr_init(attr));
     check(posix_spawnattr_setflags(attr, POSIX_SPAWN_USEVFORK));
 
     posix_spawn_file_actions_t.ByReference file_actions = new posix_spawn_file_actions_t.ByReference();
     check(posix_spawn_file_actions_init(file_actions));
-    //posix_spawn_file_actions_addclose(file_actions, 0);
-    //posix_spawn_file_actions_addclose(file_actions, 1);
-    //posix_spawn_file_actions_addclose(file_actions, 2);
-
-
-    //posix_spawnattr_setflags(&attr, POSIX_SPAWN_USEVFORK)
+    //posix_spawn_file_actions_addclose(file_actions, parent_read);
+    //posix_spawn_file_actions_addclose(file_actions, parent_write);
 
     //The process is started effectively suspended -- waiting for SIGSTOP,
     //SIGKILL, or SIGUSR1. Under normal circumstances, we send SIGUSR1 to the
     //child process, allowing it to continue execution.
     IntByReference ptr_pid = new IntByReference();
-    check(posix_spawnp(ptr_pid, "/home/sysadmin/work/jcommon/process/src/main/resources/native/unix/x86_64/bin/spawn", file_actions, attr, null, null));
-    check(posix_spawn_file_actions_destroy(file_actions));
-    check(posix_spawnattr_destroy(attr));
+    Pointer argv = createPointerToStringArray(false, "/path/to/spawn", str_child_read, str_child_write, null);
+    check(posix_spawnp(ptr_pid, "/work/etc/jcommon/process/src/main/resources/native/unix/x86_64/bin/spawn", file_actions, attr, argv, null));
+    disposeStringArray(argv);
+
+    //close(child_read);
+    //close(child_write);
 
     //expects a SIGINT to be sent
-    int pid = ptr_pid.getValue();
-    String queue_name = "/FC94525A-FB42-4BA1-9D8E-A0CA72033751/" + getpid() +"/" + pid;
+    final int pid = ptr_pid.getValue();
+
     System.out.println("PID: " + pid);
-    System.out.println("MSG QUEUE NAME: " + queue_name);
+
+    int written = write(parent_write, Charset.forName("ASCII").encode("HELLO BABY\0"), "HELLO BABY".length());
 
 
     //Allow the child process to run execve() and begin doing real work.
-    check(kill(pid, SIGINT));
+    //check(kill(pid, SIGINT));
 
     IntByReference status = new IntByReference();
     waitpid(pid, status, 0);
+
+    check(posix_spawn_file_actions_destroy(file_actions));
+    check(posix_spawnattr_destroy(attr));
 
     //try { Thread.sleep(30 * 1000); } catch(Throwable t) { }
     return null;

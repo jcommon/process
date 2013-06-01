@@ -1,11 +1,10 @@
+#include <stdlib.h>
+#include <limits.h>
 #include <stdio.h>
+#include <errno.h>
 #include <signal.h>
 #include <semaphore.h>
-#include <errno.h>
 #include <stdbool.h>
-#include <mqueue.h>
-
-#define QUEUE_NAME "/FC94525A-FB42-4BA1-9D8E-A0CA72033751/%d/%d"
 
 #define DEBUG(format, ...)                                                          \
   {                                                                                 \
@@ -13,8 +12,20 @@
     fflush(stderr);                                                                 \
   }
 
-#define ERROR -1
-#define SUCCESS 0
+#define INFO(format, ...)                                                           \
+  {                                                                                 \
+    fprintf(stdout, format "\n", ## __VA_ARGS__);                                   \
+    fflush(stdout);                                                                 \
+  }
+
+#define ERROR(format, ...)                                                          \
+  {                                                                                 \
+    fprintf(stderr, format "\n", ## __VA_ARGS__);                                   \
+    fflush(stderr);                                                                 \
+  }
+
+#define EXIT_ERROR -1
+#define EXIT_SUCCESS 0
 
 #define BUFFER_SIZE 1024
 
@@ -26,6 +37,25 @@ static int HANDLED_SIGNALS[] = {
 
 static sem_t sem;
 static volatile bool signal_received = false;
+
+static void usage() {
+  INFO("Usage: ");
+  INFO("  spawn <read pipe fd> <write pipe fd>");
+}
+
+static bool parse_to_int(const char* value, int* ret) {
+  long val;
+  char *endptr;
+
+  errno = 0;
+  val = strtol(value, &endptr, 10);
+  if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+    return false;
+  }
+
+  *ret = (int)val;
+  return true;
+}
 
 static void sighandler(int signum, siginfo_t *info, void *ptr) {
   DEBUG("Received signal from %d: %d\n", info->si_pid, signum);
@@ -53,83 +83,78 @@ int main(int argc, const char *argv[]) {
   //to launch this process, so it should have effectively already
   //forked (vforked if possible).
 
-  char queue_name[128];
+  int read_fd, write_fd;
   struct sigaction act;
-  int s, i, queue_name_size, ret;
-  mqd_t queue_handle;
-  struct mq_attr msgq_attr;
-  ssize_t bytes_read;
+  int s, i, ret;
+  ssize_t bytes_read, bytes_written;
   char buffer[BUFFER_SIZE];
 
-  //Clear the buffer.
-  memset (buffer, 0, BUFFER_SIZE);
+  //setvbuf(stdout, NULL, _IONBF, 0);
 
-  //Formulate the queue name which is a GUID + the parent PID + the child PID.
-  queue_name_size = 1 + snprintf(queue_name, 128, QUEUE_NAME, getppid(), getpid());
-
-  DEBUG("QUEUE: %s\n", queue_name);
-  DEBUG("Parent PID: %d\n", getppid());
-  DEBUG("PID: %d\n", getpid());
-
-  //Unlink the queue if it exists.
-  mq_unlink(queue_name);
-
-  //Open the message queue.
-  queue_handle = mq_open(queue_name, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG, NULL);
-  if (-1 == queue_handle) {
-    return ERROR;
+  for(i = 0; i < argc; ++i) {
+    ERROR("%d: %s", i, argv[i]);
   }
 
-  bytes_read = mq_receive(queue_handle, )
-
-  //Still have an issue if the signal is sent before we have the chance
-  //to register our signal handler.
-
-  DEBUG("AFTER SLEEP 1\n");
-
-  sem_init(&sem, 0, 0);
-
-  act.sa_sigaction = sighandler;
-  act.sa_flags = SA_SIGINFO;
-  sigemptyset(&act.sa_mask);
-
-  for(i = 0; i < HANDLED_SIGNALS_SIZE; ++i) {
-    sigaction(HANDLED_SIGNALS[i], &act, NULL);
+  if (argc != 3) {
+    ERROR("Invalid arguments.");
+    usage();
+    return EXIT_ERROR;
   }
 
-  DEBUG("BEFORE WAIT 1\n");
-
-  while(((s = sem_wait(&sem)) != 0 || (s != -1 && errno != EINTR)) && !signal_received) {
-    ;
+  if (!parse_to_int(argv[1], &read_fd)) {
+    ERROR("Invalid <read fd>.")
+    usage();
+    return EXIT_ERROR;
   }
 
-  sem_destroy(&sem);
+  if (!parse_to_int(argv[2], &write_fd)) {
+    ERROR("Invalid <write fd>.")
+    usage();
+    return EXIT_ERROR;
+  }
 
-  DEBUG("%s\n", "AFTER 1");
+  INFO("READ FD: %d", read_fd);
+  INFO("WRITE FD: %d", write_fd);
 
-//  sigprocmask(SIG_SETMASK, &mask_old, NULL);
+  bytes_read = read(read_fd, buffer, BUFFER_SIZE);
+
+  INFO("RECVD: %s (%d bytes)", buffer, bytes_read);
+
+
+//
+//  //Clear the buffer.
+//  memset (buffer, 0, BUFFER_SIZE);
+//
+//  //Still have an issue if the signal is sent before we have the chance
+//  //to register our signal handler.
+//
+//  sem_init(&sem, 0, 0);
+//
+//  act.sa_sigaction = sighandler;
+//  act.sa_flags = SA_SIGINFO;
+//  sigemptyset(&act.sa_mask);
+//
+//  for(i = 0; i < HANDLED_SIGNALS_SIZE; ++i) {
+//    sigaction(HANDLED_SIGNALS[i], &act, NULL);
+//  }
+//
+//  while(((s = sem_wait(&sem)) != 0 || (s != -1 && errno != EINTR)) && !signal_received) {
+//    ;
+//  }
+//
+//  sem_destroy(&sem);
+//
+//  DEBUG("%s\n", "AFTER 1");
+//
+//  chdir("/work/etc/jcommon/process/src/main");
 //
 //  DEBUG("%s\n", "AFTER 2");
 //
-//  //Disable buffering on stdout.
-//  //setvbuf(stdout, NULL, _IONBF, 0);
-//
-//  DEBUG("%s\n", "Executing process...");
-//
-//  char *temp[] = { NULL, "/tmp/blah", NULL };
-//  temp[0] = "test.sh";
-//
-  chdir("/home/sysadmin/work/jcommon/process/src/main");
-
-  DEBUG("%s\n", "AFTER 2");
-
-  char *temp[] = { NULL, ".", NULL };
-  temp[0] = "ls";
-  ret = __execvpe("ls", temp, NULL);
-
-//
 //  //Replace the current process w/ the desired real work.
-//  //ret = execve("test.sh", temp, NULL);
+//
+//  char *temp[] = { NULL, ".", NULL };
+//  temp[0] = "ls";
+//  ret = __execvpe("ls", temp, NULL);
 //
 //  //Should only happen if execve() fails.
 //  return ret;

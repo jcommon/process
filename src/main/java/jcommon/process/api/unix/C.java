@@ -21,6 +21,7 @@ package jcommon.process.api.unix;
 
 import com.sun.jna.*;
 import com.sun.jna.ptr.IntByReference;
+import jcommon.process.api.PinnableMemory;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -480,6 +481,9 @@ public class C {
   public static native int kill(int pid, int sig);
   public static native int waitpid(int pid, IntByReference status, int options);
 
+  public static native int pipe(int[] pipefd);
+  public static native int write(int fd, ByteBuffer buffer, int count);
+
   public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t.ByReference __file_actions, int _fd, String __path, int __oflag, int mode);
@@ -493,6 +497,7 @@ public class C {
   //int posix_spawnp(pid_t *restrict pid, const char *restrict file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char * const envp[restrict]);
   public static native int posix_spawn(IntByReference pid, String path, Pointer fileActions, Pointer attr, ByteBuffer argv, ByteBuffer envp);
   public static native int posix_spawnp(IntByReference pid, String file, posix_spawn_file_actions_t.ByReference file_actions, posix_spawnattr_t.ByReference attrp, ByteBuffer argv, ByteBuffer envp);
+  public static native int posix_spawnp(IntByReference pid, String file, posix_spawn_file_actions_t.ByReference file_actions, posix_spawnattr_t.ByReference attrp, Pointer argv, ByteBuffer envp);
 }
 
 /*
