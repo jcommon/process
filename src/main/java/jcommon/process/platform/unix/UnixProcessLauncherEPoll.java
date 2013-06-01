@@ -54,7 +54,7 @@ public class UnixProcessLauncherEPoll {
 
     bb.flip();
     write(write_fd, bb, bb.limit());
-    fsync(write_fd);
+    //fsync(write_fd);
   }
 
   private static void write_int(final int write_fd, final int value) {
@@ -76,7 +76,7 @@ public class UnixProcessLauncherEPoll {
     if (len > 0) {
       write(write_fd, bb, bb.limit());
     }
-    fsync(write_fd);
+    //fsync(write_fd);
   }
 
   public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
@@ -169,11 +169,11 @@ public class UnixProcessLauncherEPoll {
     //Add an additional null value.
     write_line(parent_write, null);
 
-    //Do work...
-    try {
-      Thread.sleep(1000 * 5);
-    } catch (InterruptedException e) {
-    }
+    ////Do work...
+    //try {
+    //  Thread.sleep(1000 * 5);
+    //} catch (InterruptedException e) {
+    //}
 
     //Write another int
     write_byte(parent_write, READY_VALUE);
