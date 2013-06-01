@@ -483,6 +483,7 @@ public class C {
 
   public static native int pipe(int[] pipefd);
   public static native int write(int fd, ByteBuffer buffer, int count);
+  public static native int fsync(int fd);
 
   public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);

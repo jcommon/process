@@ -5,6 +5,11 @@
 #include <signal.h>
 #include <semaphore.h>
 #include <stdbool.h>
+#include <stdint.h>
+
+#define execvpe __execvpe
+
+#define READY_VALUE 0x0
 
 #define MIN(a,b) ((a) < (b) ? a : b)
 
@@ -48,7 +53,16 @@ static bool parse_to_int(const char* value, int* ret) {
   return true;
 }
 
-static bool read_int(const int fd, size_t *value, ssize_t *bytes_read) {
+static bool read_byte(const int fd, char *value, int *bytes_read) {
+  *bytes_read = read(fd, value, 1);
+  if (*bytes_read != 1) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool read_int(const int fd, int32_t *value, int *bytes_read) {
   *bytes_read = read(fd, value, 4);
   if (*bytes_read != 4 || *value < 0) {
     *value = 0;
@@ -58,11 +72,11 @@ static bool read_int(const int fd, size_t *value, ssize_t *bytes_read) {
   return true;
 }
 
-static bool read_line(const int fd, char **line, size_t *line_len, size_t *line_size) {
-  size_t msg_size;
+static bool read_line(const int fd, char **line, size_t *line_len, int32_t *line_size) {
+  int32_t msg_size;
   size_t msg_len = 0;
-  ssize_t bytes_read;
-  ssize_t total_read_so_far = 0;
+  int32_t bytes_read;
+  int32_t total_read_so_far = 0;
   char* buffer;
 
   //Read a message providing the size of the message (line).
@@ -75,7 +89,7 @@ static bool read_line(const int fd, char **line, size_t *line_len, size_t *line_
   }
 
   if (msg_size == 0) {
-    INFO("Empty line.");
+    //INFO("Empty line.");
     *line = NULL;
     *line_len = 0;
     *line_size = 0;
@@ -92,8 +106,7 @@ static bool read_line(const int fd, char **line, size_t *line_len, size_t *line_
 
   //Get the length of the string.
   msg_len = strnlen(buffer, msg_size);
-
-  INFO("Read full line.");
+  //msg_len = msg_size + 1;
 
   //Provide this info. to the caller.
   *line = buffer;
@@ -117,11 +130,14 @@ int main(int argc, const char *argv[]) {
   int read_fd, write_fd;
 
   char *working_directory;
-  size_t line_len, line_size, bytes_read;
+  size_t line_len;
+  int32_t line_size, bytes_read;
 
   char** child_argv;
-  size_t child_argc;
+  int32_t child_argc;
   char* arg;
+
+  char ready;
 
   int i, ret;
 
@@ -176,12 +192,12 @@ int main(int argc, const char *argv[]) {
     goto ERROR;
   }
 
-  INFO("Expecting %d arguments.", child_argc);
+  //INFO("Expecting %d arguments.", child_argc);
 
   child_argv = (char**)malloc(sizeof(char*) * child_argc);
 
   for(i = 0; i < child_argc; i++) {
-    INFO("Reading argument %d", i);
+    //INFO("Reading argument %d", i);
     if (!read_line(read_fd, &arg, &line_len, &line_size)) {
       int so_far = i;
 
@@ -206,11 +222,18 @@ int main(int argc, const char *argv[]) {
   //Wait for parent to send one last message saying it's now done
   //processing and that we can begin execution.
 
+  //INFO("Waiting for parent process to signal it's ready.");
+
+  if (!read_byte(read_fd, &ready, &bytes_read) || ready != READY_VALUE) {
+    ERROR("Failed to receive notification from parent process to begin execution.");
+    goto ERROR;
+  }
+
   close(read_fd);
   close(write_fd);
 
   //This should only return if there was a problem.
-  ret = __execvpe(child_argv[0], child_argv, NULL);
+  ret = execvpe(child_argv[0], child_argv, NULL);
 
   //Free everything up until this point.
   for(i = 0; i < child_argc; ++i) {
@@ -229,44 +252,6 @@ ERROR:
   close(read_fd);
   close(write_fd);
   return EXIT_ERROR;
-
-//
-//  //Clear the buffer.
-//  memset (buffer, 0, BUFFER_SIZE);
-//
-//  //Still have an issue if the signal is sent before we have the chance
-//  //to register our signal handler.
-//
-//  sem_init(&sem, 0, 0);
-//
-//  act.sa_sigaction = sighandler;
-//  act.sa_flags = SA_SIGINFO;
-//  sigemptyset(&act.sa_mask);
-//
-//  for(i = 0; i < HANDLED_SIGNALS_SIZE; ++i) {
-//    sigaction(HANDLED_SIGNALS[i], &act, NULL);
-//  }
-//
-//  while(((s = sem_wait(&sem)) != 0 || (s != -1 && errno != EINTR)) && !signal_received) {
-//    ;
-//  }
-//
-//  sem_destroy(&sem);
-//
-//  DEBUG("%s\n", "AFTER 1");
-//
-//  chdir("/work/etc/jcommon/process/src/main");
-//
-//  DEBUG("%s\n", "AFTER 2");
-//
-//  //Replace the current process w/ the desired real work.
-//
-//  char *temp[] = { NULL, ".", NULL };
-//  temp[0] = "ls";
-//  ret = __execvpe("ls", temp, NULL);
-//
-//  //Should only happen if execve() fails.
-//  return ret;
 }
 
 //static int HANDLED_SIGNALS[] = {

@@ -15,6 +15,10 @@ import java.nio.IntBuffer;
 import java.nio.charset.Charset;
 
 public class UnixProcessLauncherEPoll {
+  private static final byte
+      READY_VALUE = (byte)0x0
+  ;
+
   private static void check(int ret) {
     if (ret != 0)
       throw new IllegalStateException("Invalid return value from system call");
@@ -42,6 +46,17 @@ public class UnixProcessLauncherEPoll {
     write_line(write_fd, value, false);
   }
 
+  private static void write_byte(final int write_fd, final byte value) {
+    final ByteBuffer bb = ByteBuffer
+      .allocate(1)
+      .order(ByteOrder.nativeOrder())
+      .put(value);
+
+    bb.flip();
+    write(write_fd, bb, bb.limit());
+    fsync(write_fd);
+  }
+
   private static void write_int(final int write_fd, final int value) {
     final ByteBuffer bb = ByteBuffer
       .allocate(4)
@@ -61,6 +76,7 @@ public class UnixProcessLauncherEPoll {
     if (len > 0) {
       write(write_fd, bb, bb.limit());
     }
+    fsync(write_fd);
   }
 
   public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariable[] environment_variables, final String[] args, final IProcessListener[] listeners) {
@@ -91,11 +107,11 @@ public class UnixProcessLauncherEPoll {
     final int[] pipe_parent_to_child = new int[2]; //parent write, child read
     final int[] pipe_child_to_parent = new int[2]; //parent read, child write
     if (pipe(pipe_parent_to_child) == -1) {
-      throw new IllegalStateException("Unable to create a pipe");
+      throw new IllegalStateException("Unable to create a pipe"); //Too many files open? (errno EMFILE or ENFILE)
     }
 
     if (pipe(pipe_child_to_parent) == -1) {
-      throw new IllegalStateException("Unable to create a pipe");
+      throw new IllegalStateException("Unable to create a pipe"); //Too many files open? (errno EMFILE or ENFILE)
     }
 
     final int parent_read = pipe_child_to_parent[0];
@@ -133,7 +149,7 @@ public class UnixProcessLauncherEPoll {
 
     System.out.println("PID: " + pid);
 
-    final String working_directory = "/home/sysadmin";
+    final String working_directory = "/home/";
     final String[] application_args = new String[] {
         "ls"
       , "-lah"
@@ -152,6 +168,15 @@ public class UnixProcessLauncherEPoll {
 
     //Add an additional null value.
     write_line(parent_write, null);
+
+    //Do work...
+    try {
+      Thread.sleep(1000 * 5);
+    } catch (InterruptedException e) {
+    }
+
+    //Write another int
+    write_byte(parent_write, READY_VALUE);
 
 
     //Allow the child process to run execve() and begin doing real work.
