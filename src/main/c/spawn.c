@@ -100,6 +100,13 @@ static bool read_line(const int fd, char **line, size_t *line_len, int32_t *line
 
   buffer = (char*)malloc(sizeof(char) * msg_size);
 
+  if (buffer == NULL) {
+    *line = NULL;
+    *line_len = 0;
+    *line_size = 0;
+    return false;
+  }
+
   //Continue reading in bytes until we've read in everything we need to.
   while((bytes_read = read(fd, buffer + total_read_so_far, MIN(msg_size, 1024))) > 0 && (total_read_so_far += bytes_read) < msg_size)
     ;
@@ -195,6 +202,11 @@ int main(int argc, const char *argv[]) {
   //INFO("Expecting %d arguments.", child_argc);
 
   child_argv = (char**)malloc(sizeof(char*) * child_argc);
+
+  if (child_argv == NULL) {
+    ERROR("Unable to allocate memory for the child process arguments.");
+    goto ERROR;
+  }
 
   for(i = 0; i < child_argc; i++) {
     //INFO("Reading argument %d", i);
