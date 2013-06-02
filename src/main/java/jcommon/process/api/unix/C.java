@@ -391,6 +391,12 @@ public class C {
     , O_EXCL     = 0x0800
   ;
 
+  public static final int
+      F_GETFL   = 3  /* get file status flags */
+    , F_SETFL   = 4  /* set file status flags */
+    , F_NOCACHE = 48 /* Mac OS X specific flag, turns cache on/off */
+  ;
+
   public static final short
       POSIX_SPAWN_RESETIDS      = 0x01
     , POSIX_SPAWN_SETPGROUP     = 0x02
@@ -482,8 +488,9 @@ public class C {
   public static native int waitpid(int pid, IntByReference status, int options);
 
   public static native int pipe(int[] pipefd);
+  public static native int read(int fd, ByteBuffer buffer, int count);
   public static native int write(int fd, ByteBuffer buffer, int count);
-  public static native int fsync(int fd);
+  public static native int fcntl(int fd, int command, long flags) throws LastErrorException;
 
   public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);

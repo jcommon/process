@@ -13,6 +13,10 @@
 
 #define MIN(a,b) ((a) < (b) ? a : b)
 
+#define STDIN  fileno(stdin)
+#define STDOUT fileno(stdout)
+#define STDERR fileno(stderr)
+
 #define DEBUG(format, ...)                                                          \
   {                                                                                 \
     fprintf(stderr, format "\n", ## __VA_ARGS__);                                   \
@@ -36,7 +40,7 @@
 
 static void usage() {
   INFO("Usage: ");
-  INFO("  spawn <read pipe fd> <write pipe fd>");
+  INFO("  spawn <stdin pipe fd> <stdout pipe fd> <stderr pipe fd>");
 }
 
 static bool parse_to_int(const char* value, int* ret) {
@@ -134,7 +138,7 @@ int main(int argc, const char *argv[]) {
   //to launch this process, so it should have effectively already
   //forked (vforked if possible).
 
-  int read_fd, write_fd;
+  int stdin_pipe_fd, stdout_pipe_fd, stderr_pipe_fd;
 
   char *working_directory;
   size_t line_len;
@@ -150,25 +154,39 @@ int main(int argc, const char *argv[]) {
 
   //setvbuf(stdout, NULL, _IONBF, 0);
 
-  if (argc != 3) {
+  if (argc != 4) {
     ERROR("Invalid arguments.");
     usage();
     return EXIT_ERROR;
   }
 
-  if (!parse_to_int(argv[1], &read_fd)) {
-    ERROR("Invalid <read fd>.");
+  if (!parse_to_int(argv[1], &stdin_pipe_fd)) {
+    ERROR("Invalid <stdin pipe fd>.");
     usage();
     return EXIT_ERROR;
   }
 
-  if (!parse_to_int(argv[2], &write_fd)) {
-    ERROR("Invalid <write fd>.");
+  if (!parse_to_int(argv[2], &stdout_pipe_fd)) {
+    ERROR("Invalid <stdout pipe fd>.");
     usage();
     return EXIT_ERROR;
   }
 
-  if (!read_line(read_fd, &working_directory, &line_len, &line_size)) {
+  if (!parse_to_int(argv[3], &stderr_pipe_fd)) {
+    ERROR("Invalid <stderr pipe fd>.");
+    usage();
+    return EXIT_ERROR;
+  }
+
+  dup2(stdin_pipe_fd, STDIN);
+  dup2(stdout_pipe_fd, STDOUT);
+  dup2(stderr_pipe_fd, STDERR);
+
+  close(stdin_pipe_fd);
+  close(stdout_pipe_fd);
+  close(stderr_pipe_fd);
+
+  if (!read_line(STDIN, &working_directory, &line_len, &line_size)) {
     ERROR("Unable to read the working directory.");
     goto ERROR;
   }
@@ -189,7 +207,7 @@ int main(int argc, const char *argv[]) {
   //Time to stream the arguments.
 
   //Start by reading in the number of expected arguments (argc, effectively).
-  if (!read_int(read_fd, &child_argc, &bytes_read)) {
+  if (!read_int(STDIN, &child_argc, &bytes_read)) {
     ERROR("Unable to determine the number of arguments.");
     goto ERROR;
   }
@@ -210,7 +228,7 @@ int main(int argc, const char *argv[]) {
 
   for(i = 0; i < child_argc; i++) {
     //INFO("Reading argument %d", i);
-    if (!read_line(read_fd, &arg, &line_len, &line_size)) {
+    if (!read_line(STDIN, &arg, &line_len, &line_size)) {
       int so_far = i;
 
       ERROR("Unable to read an argument.");
@@ -236,13 +254,10 @@ int main(int argc, const char *argv[]) {
 
   //INFO("Waiting for parent process to signal it's ready.");
 
-  if (!read_byte(read_fd, &ready, &bytes_read) || ready != READY_VALUE) {
+  if (!read_byte(STDIN, &ready, &bytes_read) || ready != READY_VALUE) {
     ERROR("Failed to receive notification from parent process to begin execution.");
     goto ERROR;
   }
-
-  close(read_fd);
-  close(write_fd);
 
   //This should only return if there was a problem.
   ret = execvpe(child_argv[0], child_argv, NULL);
@@ -261,8 +276,6 @@ ERROR:
   if (working_directory != NULL) {
     free(working_directory);
   }
-  close(read_fd);
-  close(write_fd);
   return EXIT_ERROR;
 }
 
