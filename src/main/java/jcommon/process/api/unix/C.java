@@ -92,22 +92,22 @@ public class C {
       EPOLLET = 1u << 31
     };
   */
-  public static interface EPOLL_EVENTS {
-    public static final int EPOLLIN = (int)0x001;
-    public static final int EPOLLPRI = (int)0x002;
-    public static final int EPOLLOUT = (int)0x004;
-    public static final int EPOLLRDNORM = (int)0x040;
-    public static final int EPOLLRDBAND = (int)0x080;
-    public static final int EPOLLWRNORM = (int)0x100;
-    public static final int EPOLLWRBAND = (int)0x200;
-    public static final int EPOLLMSG = (int)0x400;
-    public static final int EPOLLERR = (int)0x008;
-    public static final int EPOLLHUP = (int)0x010;
-    public static final int EPOLLRDHUP = (int)0x2000;
-    public static final int EPOLLWAKEUP = (int)(1 << 29);
-    public static final int EPOLLONESHOT = (int)(1 << 30);
-    public static final int EPOLLET = (int)(1 << 31);
-  };
+  public static int
+      EPOLLIN      = (int)0x001
+    , EPOLLPRI     = (int)0x002
+    , EPOLLOUT     = (int)0x004
+    , EPOLLRDNORM  = (int)0x040
+    , EPOLLRDBAND  = (int)0x080
+    , EPOLLWRNORM  = (int)0x100
+    , EPOLLWRBAND  = (int)0x200
+    , EPOLLMSG     = (int)0x400
+    , EPOLLERR     = (int)0x008
+    , EPOLLHUP     = (int)0x010
+    , EPOLLRDHUP   = (int)0x2000
+    , EPOLLWAKEUP  = (int)(1 << 29)
+    , EPOLLONESHOT = (int)(1 << 30)
+    , EPOLLET      = (int)(1 << 31)
+  ;
 
   /*
     typedef union epoll_data
@@ -357,6 +357,7 @@ public class C {
     }
   }
 
+  // /usr/include/x86_64-linux-gnu/sys/stat.h
   public static final int
       S_IRWXU = 0000700
     , S_IRUSR = 0000400
@@ -375,6 +376,7 @@ public class C {
     , S_ISVTX = 0001000
   ;
 
+  // /usr/include/x86_64-linux-gnu/bits/fcntl-linux.h
   public static final int
       O_RDONLY   = 0x0000
     , O_WRONLY   = 0x0001
@@ -391,10 +393,23 @@ public class C {
     , O_EXCL     = 0x0800
   ;
 
+  // /usr/include/x86_64-linux-gnu/bits/fcntl-linux.h
   public static final int
       F_GETFL   = 3  /* get file status flags */
     , F_SETFL   = 4  /* set file status flags */
     , F_NOCACHE = 48 /* Mac OS X specific flag, turns cache on/off */
+  ;
+
+  // /usr/include/x86_64-linux-gnu/bits/eventfd.h
+  public static final int
+      EFD_SEMAPHORE = 00000001
+    , EFD_CLOEXEC   = 02000000
+    , EFD_NONBLOCK  = 00004000
+  ;
+
+  // /usr/include/x86_64-linux-gnu/bits/epoll.h
+  public static final int
+      EPOLL_CLOEXEC  = 02000000
   ;
 
   public static final short
@@ -407,6 +422,7 @@ public class C {
     , POSIX_SPAWN_USEVFORK      = 0x40
   ;
 
+  // /usr/include/x86_64-linux-gnu/bits/signum.h
   public static final int
       SIGHUP		= 1	/* Hangup (POSIX).  */
     , SIGINT		= 2	/* Interrupt (ANSI).  */
@@ -444,6 +460,7 @@ public class C {
     , SIGUNUSED	= 31
   ;
 
+  // /usr/include/x86_64-linux-gnu/bits/waitflags.h
   public static final int
       WNOHANG    = 1
     , WUNTRACED  = 2
@@ -491,6 +508,8 @@ public class C {
   public static native int read(int fd, ByteBuffer buffer, int count);
   public static native int write(int fd, ByteBuffer buffer, int count);
   public static native int fcntl(int fd, int command, long flags) throws LastErrorException;
+
+  public static native int eventfd(int initval, int flags);
 
   public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);
