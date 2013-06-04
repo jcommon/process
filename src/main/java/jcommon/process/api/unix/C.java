@@ -167,6 +167,14 @@ public class C {
     protected List getFieldOrder() {
       return Arrays.asList("events", "data");
     }
+    public epoll_event(Pointer p) {
+      super(p);
+      read();
+    }
+    public void reuse(Pointer p, int offset) {
+      useMemory(p, offset);
+      read();
+    }
     public epoll_event(int events, epoll_data_t data) {
       super();
       this.events = events;
@@ -240,10 +248,11 @@ public class C {
   public static native int epoll_ctl(int epfd, int op, int fd, Pointer event);
 
   //extern int epoll_wait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout);
+  public static native int epoll_wait(int epfd, Pointer events, int maxevents, int timeout);
   public static native int epoll_wait(int epfd, epoll_event.ByReference events, int maxevents, int timeout);
 
   //extern int epoll_pwait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
-  public static native int epoll_pwait(int epfd, epoll_event.ByReference events, int maxevents, int timeout, Pointer ss);
+  public static native int epoll_pwait(int epfd, Pointer events, int maxevents, int timeout, Pointer ss);
 
 
   /*
@@ -510,6 +519,7 @@ public class C {
   public static native int fcntl(int fd, int command, long flags) throws LastErrorException;
 
   public static native int eventfd(int initval, int flags);
+  public static native int eventfd_write(int fd, long value);
 
   public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
   public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);

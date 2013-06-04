@@ -1,23 +1,24 @@
 package jcommon.process.platform.unix;
 
+import com.sun.jna.Memory;
+import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.Structure;
 import com.sun.jna.ptr.IntByReference;
+import jcommon.core.concurrent.BoundedAutoGrowThreadPool;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
+import jcommon.process.api.PinnableMemory;
 
+import static jcommon.core.concurrent.BoundedAutoGrowThreadPool.*;
 import static jcommon.process.api.JNAUtils.*;
 import static jcommon.process.api.unix.C.*;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
-import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.AbstractExecutorService;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class UnixProcessLauncherEPoll {
   private static final byte
@@ -279,52 +280,68 @@ public class UnixProcessLauncherEPoll {
     //http://linux.die.net/man/2/epoll_wait
 
     final epoll_event.ByReference event = new epoll_event.ByReference();
-    event.data.fd = parent_write_to_child_stdin;
-    event.events = EPOLLIN | EPOLLET | EPOLLHUP | EPOLLONESHOT;
-    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, parent_write_to_child_stdin, event);
+
+//    final int stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+//    event.data.fd = stop_fd;
+//    event.events = EPOLLIN | EPOLLET | EPOLLHUP;
+//    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, stop_fd, event);
+
+    event.data.fd = parent_read_from_child_stdout;// parent_write_to_child_stdin;
+    //event.data.setType(Integer.TYPE);
+    event.events = EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT;
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, parent_read_from_child_stdout, event);
 
     //Create a thread pool
-    final AutoGrowCallbackExecutorService e = new AutoGrowCallbackExecutorService<Object>(
-      2,
-      Math.max(2, Runtime.getRuntime().availableProcessors()),
-      null,
+    final BoundedAutoGrowThreadPool pool = BoundedAutoGrowThreadPool.create(
+      3,
+      Math.max(3, Runtime.getRuntime().availableProcessors()),
 
-      new AutoGrowCallbackExecutorService.IGrowCallback<Object>() {
+      new IGrowCallback() {
         @Override
-        public AutoGrowCallbackExecutorService.IWorker create(final Object value) {
-          return new AutoGrowCallbackExecutorService.IWorker() {
+        public IWorker growNewWorker(final Object value) {
+          return new IWorker() {
             @Override
             public void doWork() throws Throwable {
-              System.out.println("CREATING THREAD");
-              Thread.sleep(1000);
+              final int MAX_EVENTS = 1;
+
+              //Create a region of memory analogous to a native array where the elements are
+              //contiguously placed.
+              final int size_of_struct = new epoll_event().size();
+              final PinnableMemory ptr = new PinnableMemory(MAX_EVENTS * size_of_struct);
+              final epoll_event event = new epoll_event();
+
+              int ready_count = 0;
+              int i = 0;
+
+              try {
+                while((ready_count = epoll_wait(epoll_fd, ptr, MAX_EVENTS, -1)) > 0) {
+                  int err = Native.getLastError();
+                  System.out.println("GOT " + ready_count + " events");
+                  System.out.println("ERR " + err);
+
+                  for(i = 0; i < ready_count; ++i) {
+                    event.reuse(ptr, size_of_struct * i);
+
+                    System.out.println("  FD: " + event.data.fd);
+                    System.out.println("  Events: " + event.events);
+                  }
+                }
+              } finally {
+                ptr.dispose();
+              }
             }
           };
         }
       },
-      new AutoGrowCallbackExecutorService.IShutdownCallback<Object>() {
+      new IShrinkCallback() {
         @Override
-        public void shutdown(final Object value) {
+        public void shrink(Object value, Thread thread, IWorker worker) {
+          //Pulse a thread
+          //Need to associate a stop_fd w/ a thread or change BoundedAutoGrowThreadPool() to not pick a particular thread...
+          //eventfd_write(stop_fd, 1L);
         }
       }
     );
-
-    System.out.println(e);
-
-    try { Thread.sleep(1000 * 2); } catch (InterruptedException exc) { }
-
-    e.growBy(1);
-    System.out.println(e);
-
-    try { Thread.sleep(1000 * 2); } catch (InterruptedException exc) { }
-
-    e.growBy(10);
-    System.out.println(e);
-
-    try { Thread.sleep(1000 * 2); } catch (InterruptedException exc) { }
-
-    e.shutdown();
-
-    System.out.println(e);
 
     //After sending the last message, spawn will execvpe() into the child
     //process. From here on out, all i/o should be redirected to callbacks
@@ -338,235 +355,21 @@ public class UnixProcessLauncherEPoll {
     //from stdin, before we have the chance to register these fd's with
     //epoll?
 
-    ByteBuffer read_buffer = ByteBuffer.allocateDirect(1024);
-    int bytes_read = 0;
-    String output;
-
-    while((bytes_read = read_bytes(parent_read_from_child_stdout, read_buffer)) > 0) {
-      output = Charset.forName("UTF-8").decode(read_buffer).toString();
-      System.out.print(output);
-    }
+//    ByteBuffer read_buffer = ByteBuffer.allocateDirect(1024);
+//    int bytes_read = 0;
+//    String output;
+//
+//    while((bytes_read = read_bytes(parent_read_from_child_stdout, read_buffer)) > 0) {
+//      output = Charset.forName("UTF-8").decode(read_buffer).toString();
+//      System.out.print(output);
+//    }
 
     IntByReference status = new IntByReference();
     waitpid(pid, status, 0);
 
 
 
-    //try { Thread.sleep(30 * 1000); } catch(Throwable t) { }
+    try { Thread.sleep(30 * 1000); } catch(Throwable t) { }
     return null;
-  }
-
-  /**
-   * Starts with a core number of threads but can grow to a given maximum.
-   */
-  private static class AutoGrowCallbackExecutorService<T extends Object> extends AbstractExecutorService {
-    public static interface IWorker {
-      void doWork() throws Throwable;
-    }
-
-    public static interface IGrowCallback<T extends Object> {
-      IWorker create(T value);
-    }
-
-    public static interface IShrinkCallback<T extends Object> {
-      void shrink(T value);
-    }
-
-    public static interface IShutdownCallback<T extends Object> {
-      void shutdown(T value);
-    }
-
-    private static class ThreadInformation {
-      private boolean please_stop = false;
-      private final CountDownLatch stop = new CountDownLatch(1);
-      private final CountDownLatch stopped = new CountDownLatch(1);
-      public Thread thread;
-
-      public ThreadInformation() {
-      }
-
-      public boolean isStopRequested() {
-        return (please_stop == true);
-      }
-
-      public void waitForStop() throws InterruptedException {
-        stop.await();
-      }
-
-      public void requestStop() {
-        please_stop = true;
-        stop.countDown();
-      }
-
-      public void stopped() {
-        stopped.countDown();
-      }
-
-      public void waitForStopped() throws InterruptedException {
-        stopped.await();
-      }
-
-      public boolean waitForStopped(long time, TimeUnit unit) throws InterruptedException {
-        return stopped.await(time, unit);
-      }
-    }
-
-    private final T value;
-    private final int minimum_pool_size;
-    private final int maximum_pool_size;
-    private final IGrowCallback<T> create_callback;
-    private final IShutdownCallback<T> shutdown_callback;
-    private final ReentrantLock lock = new ReentrantLock();
-    private boolean shutdown = false;
-    private int pool_size = 0;
-    private int core_size = 0;
-    private HashSet<ThreadInformation> threads;
-
-    public AutoGrowCallbackExecutorService(final int minimumPoolSize, final int maximumPoolSize, final T value, final IGrowCallback<T> createCallback, final IShutdownCallback<T> shutdownCallback) {
-      if (minimumPoolSize > maximumPoolSize) {
-        throw new IllegalArgumentException("minimumPoolSize must be less than or equal to the maximumPoolSize");
-      }
-
-      this.value = value;
-      this.minimum_pool_size = minimumPoolSize;
-      this.maximum_pool_size = maximumPoolSize;
-      this.create_callback = createCallback;
-      this.shutdown_callback = shutdownCallback;
-
-      this.threads = new HashSet<ThreadInformation>(maximumPoolSize, 1.0f);
-
-      growThreadPoolBy(minimumPoolSize);
-    }
-
-    public T getValue() {
-      return value;
-    }
-
-    public int getMinimumPoolSize() {
-      return minimum_pool_size;
-    }
-
-    public int getMaximumPoolSize() {
-      return maximum_pool_size;
-    }
-
-    public int getPoolSize() {
-      return pool_size;
-    }
-
-    public int getCoreSize() {
-      return core_size;
-    }
-
-    @Override
-    public String toString() {
-      final StringBuilder sb = new StringBuilder(128);
-      sb.append("min pool size:");
-      sb.append(Integer.toString(getMinimumPoolSize()));
-      sb.append("; max pool size: ");
-      sb.append(Integer.toString(getMaximumPoolSize()));
-      sb.append("; pool size: ");
-      sb.append(Integer.toString(getPoolSize()));
-      sb.append("; core size: ");
-      sb.append(Integer.toString(getCoreSize()));
-      return sb.toString();
-    }
-
-    private void growThreadPoolBy(final int by) {
-      if (by == 0)
-        return;
-      if (by < 0)
-        throw new IllegalArgumentException("by must be greater than or equal to zero");
-
-      int i = 0;
-      lock.lock();
-
-      try {
-        final int size = Math.min(by, Math.max(0, maximum_pool_size - pool_size));
-
-        for(; i < size; ++i) {
-          final ThreadInformation ti = new ThreadInformation();
-          final IWorker runner = create_callback.create(value);
-          final Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-              try {
-                while(!ti.isStopRequested()) {
-                  try {
-                    runner.doWork();
-                  } catch(Throwable t) {
-                  }
-                  ti.waitForStop();
-                }
-              } catch(Throwable t) {
-                //Do nothing.
-              } finally {
-                ti.stopped();
-              }
-            }
-          };
-          final Thread thread = new Thread(runnable);
-          ti.thread = thread;
-
-          threads.add(ti);
-
-          thread.setDaemon(false);
-          thread.start();
-        }
-      } finally {
-        pool_size += i;
-        core_size += by;
-        lock.unlock();
-      }
-    }
-
-    public void growBy(int by) {
-      growThreadPoolBy(by);
-    }
-
-    public void stopAll(boolean waitForThreadToStop) {
-      lock.lock();
-      try {
-        for(ThreadInformation ti : threads) {
-          ti.requestStop();
-          if (waitForThreadToStop)
-            ti.waitForStopped();
-        }
-      } catch(InterruptedException ie) {
-        Thread.currentThread().interrupt();
-      } finally {
-        lock.unlock();
-      }
-    }
-
-    @Override
-    public void shutdown() {
-      stopAll(true);
-    }
-
-    @Override
-    public List<Runnable> shutdownNow() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    @Override
-    public boolean isShutdown() {
-      return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    @Override
-    public boolean isTerminated() {
-      return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    @Override
-    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
-      return false;  //To change body of implemented methods use File | Settings | File Templates.
-    }
-
-    @Override
-    public void execute(Runnable command) {
-      //To change body of implemented methods use File | Settings | File Templates.
-    }
   }
 }
