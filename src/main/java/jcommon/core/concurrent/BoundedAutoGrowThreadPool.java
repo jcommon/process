@@ -1,10 +1,7 @@
 package jcommon.core.concurrent;
 
 import java.util.LinkedList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -168,6 +165,7 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
 
     try {
       final int size = starting_up ? by : Math.max(0, Math.min(maximum_pool_size, core_size + by) - pool_size);
+      final CyclicBarrier barrier = new CyclicBarrier(size + 1);
 
       for(; i < size; ++i) {
         final ThreadInformation<T> ti = new ThreadInformation<T>();
@@ -176,6 +174,7 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
           @Override
           public void run() {
             try {
+              barrier.await();
               while(!ti.isStopRequested()) {
                 try {
                   worker.doWork();
@@ -199,6 +198,12 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
 
         thread.setDaemon(false);
         thread.start();
+      }
+      try {
+        barrier.await();
+      } catch(InterruptedException ie) {
+        Thread.currentThread().interrupt();
+      } catch(BrokenBarrierException bbe) {
       }
     } finally {
       pool_size += i;
