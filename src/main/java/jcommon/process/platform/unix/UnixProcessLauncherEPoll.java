@@ -5,6 +5,7 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.ptr.LongByReference;
 import jcommon.core.concurrent.BoundedAutoGrowThreadPool;
 import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
@@ -14,6 +15,7 @@ import jcommon.process.api.PinnableMemory;
 import static jcommon.core.concurrent.BoundedAutoGrowThreadPool.*;
 import static jcommon.process.api.JNAUtils.*;
 import static jcommon.process.api.unix.C.*;
+import static jcommon.process.api.unix.C.eventfd_write;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -279,19 +281,22 @@ public class UnixProcessLauncherEPoll {
     //http://stackoverflow.com/questions/5541054/how-to-correctly-read-data-when-using-epoll-wait
     //http://linux.die.net/man/2/epoll_wait
 
-    final epoll_event.ByReference event = new epoll_event.ByReference();
+    epoll_event.ByReference event;
 
-//    final int stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-//    event.data.fd = stop_fd;
-//    event.events = EPOLLIN | EPOLLET | EPOLLHUP;
-//    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, stop_fd, event);
+    final int stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 
-    event.data.fd = parent_read_from_child_stdout;// parent_write_to_child_stdin;
-    //event.data.setType(Integer.TYPE);
-    event.events = EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT;
+    //System.out.println("stop_fd: " + stop_fd);
+    //System.out.println("parent_read_from_child_stdout: " + parent_read_from_child_stdout);
+
+    event = new epoll_event.ByReference(stop_fd, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
+    //eventfd_write(stop_fd, 1); //This is how you tell a thread in epoll_wait() to stop. Write the value 1 once per thread.
+    //eventfd_write(stop_fd, 1); //Just for illustration on how you'd instruct 2 threads to stop.
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, stop_fd, event);
+
+    event = new epoll_event.ByReference(parent_read_from_child_stdout, EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, parent_read_from_child_stdout, event);
 
-    //Create a thread pool
+    //Create a thread pool that automatically grows and shrinks according to a provided value.
     final BoundedAutoGrowThreadPool pool = BoundedAutoGrowThreadPool.create(
       3,
       Math.max(3, Runtime.getRuntime().availableProcessors()),
@@ -302,30 +307,68 @@ public class UnixProcessLauncherEPoll {
           return new IWorker() {
             @Override
             public void doWork() throws Throwable {
-              final int MAX_EVENTS = 1;
+              final int MAX_EVENTS = 4;
+
+              //final epoll_event[] events = (epoll_event[])new epoll_event().toArray(MAX_EVENTS);
+              //final Structure first_event_from_array = events[0];
 
               //Create a region of memory analogous to a native array where the elements are
               //contiguously placed.
               final int size_of_struct = new epoll_event().size();
               final PinnableMemory ptr = new PinnableMemory(MAX_EVENTS * size_of_struct);
-              final epoll_event event = new epoll_event();
+              final epoll_event.ByReference event = new epoll_event.ByReference();
+              final LongByReference ptr_long = new LongByReference();
 
+              boolean please_stop = false;
               int ready_count = 0;
+              long eventfd_value;
               int i = 0;
+              int err;
 
               try {
-                while((ready_count = epoll_wait(epoll_fd, ptr, MAX_EVENTS, -1)) > 0) {
-                  int err = Native.getLastError();
-                  System.out.println("GOT " + ready_count + " events");
-                  System.out.println("ERR " + err);
+                while(!please_stop && (ready_count = epoll_wait(epoll_fd, ptr, MAX_EVENTS, -1)) > 0) {
+                  err = Native.getLastError();
+
+                  System.out.println(ready_count + " events on thread " + Thread.currentThread().getName());
 
                   for(i = 0; i < ready_count; ++i) {
                     event.reuse(ptr, size_of_struct * i);
+
+                    if (event.data.fd == stop_fd && eventfd_read(stop_fd, ptr_long) == 0) {
+                      //Now it's possible that stop_fd has been written to more than once.
+                      //If that's the case then the value we read will != 1, it could be 2 or 3 or whatever.
+                      //When that's happening, it's an indicator that the thread pool is shutting down and
+                      //we need to cleanup.
+                      eventfd_value = ptr_long.getValue();
+                      if (eventfd_value > 0) {
+                        //Set a flag for now. We need to continue processing the other events and then once that's done
+                        //it's safe to circle back and check this flag.
+                        please_stop = true;
+
+                        //Decrement this.
+                        //
+                        //If EFD_SEMAPHORE was not specified and the eventfd counter has a nonzero value, then a
+                        //read() returns 8 bytes containing that value, and the counter's value is reset to zero.
+                        //
+                        //Because of this, we re-write it to its previous value minus 1 so that other threads can
+                        //pick it up. It's safe to do this b/c we're using EPOLLONESHOT which will disable a fd
+                        //after it's been pulled out with epoll_wait(). You have to rearm it for epoll to continue
+                        //processing events for the fd.
+                        eventfd_write(stop_fd, eventfd_value - 1);
+
+                        //It's necessary to re-arm this fd since we're using EPOLLONESHOT.
+                        //It's safe to re-arm inside the loop because we check for please_stop before calling
+                        //epoll_wait(). If we didn't do the check first, then epoll_wait() could be called again
+                        //and we only want to process this message once per thread.
+                        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, stop_fd, event.oneshot());
+                      }
+                    }
 
                     System.out.println("  FD: " + event.data.fd);
                     System.out.println("  Events: " + event.events);
                   }
                 }
+                System.out.println("STOPPING");
               } finally {
                 ptr.dispose();
               }
@@ -369,7 +412,7 @@ public class UnixProcessLauncherEPoll {
 
 
 
-    try { Thread.sleep(30 * 1000); } catch(Throwable t) { }
+    try { Thread.sleep(5 * 60 * 1000); } catch(Throwable t) { }
     return null;
   }
 }
