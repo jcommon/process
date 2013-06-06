@@ -24,6 +24,9 @@ import jcommon.process.platform.unix.UnixProcessLauncherEPoll;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static jcommon.process.api.unix.C.*;
+import static jcommon.process.api.unix.EPoll.*;
+
 import static jcommon.process.ProcessResources.*;
 import static org.junit.Assert.*;
 
@@ -45,7 +48,7 @@ public class CTest {
     if (OSFamily.getSystemOSFamily() == OSFamily.Windows)
       return;
 
-    final int fd = C.epoll_create(1);
+    final int fd = epoll_create(1);
     assertTrue(fd > 0);
     assertTrue(C.close(fd) == 0);
 

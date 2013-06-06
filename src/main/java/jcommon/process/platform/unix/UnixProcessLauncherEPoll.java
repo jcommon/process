@@ -1,9 +1,7 @@
 package jcommon.process.platform.unix;
 
-import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
-import com.sun.jna.Structure;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.LongByReference;
 import jcommon.core.concurrent.BoundedAutoGrowThreadPool;
@@ -12,15 +10,15 @@ import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.PinnableMemory;
 
-import static jcommon.core.concurrent.BoundedAutoGrowThreadPool.*;
-import static jcommon.process.api.JNAUtils.*;
-import static jcommon.process.api.unix.C.*;
-import static jcommon.process.api.unix.C.eventfd_write;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
-import java.util.List;
+
+import static jcommon.core.concurrent.BoundedAutoGrowThreadPool.*;
+import static jcommon.process.api.JNAUtils.*;
+import static jcommon.process.api.unix.C.*;
+import static jcommon.process.api.unix.EPoll.*;
+import static jcommon.process.api.unix.PosixSpawn.*;
 
 public class UnixProcessLauncherEPoll {
   private static final byte
@@ -89,6 +87,7 @@ public class UnixProcessLauncherEPoll {
     //fsync(write_fd);
   }
 
+  @SuppressWarnings("unused")
   private static int read_bytes(final int fd, final ByteBuffer buffer) {
     if (!buffer.isDirect()) {
       throw new IllegalArgumentException("buffer must be a direct byte buffer");
@@ -320,9 +319,9 @@ public class UnixProcessLauncherEPoll {
               final LongByReference ptr_long = new LongByReference();
 
               boolean please_stop = false;
-              int ready_count = 0;
               long eventfd_value;
-              int i = 0;
+              int ready_count;
+              int i;
               int err;
 
               try {
@@ -412,7 +411,7 @@ public class UnixProcessLauncherEPoll {
 
 
 
-    try { Thread.sleep(5 * 60 * 1000); } catch(Throwable t) { }
+    try { Thread.sleep(5 * 60 * 1000); } catch(Throwable ignored) { }
     return null;
   }
 }

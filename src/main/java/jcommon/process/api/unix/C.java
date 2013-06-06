@@ -29,16 +29,6 @@ import java.util.List;
 
 /**
  *
- * http://code.activestate.com/recipes/576759-subprocess-with-async-io-pipes-class/
- * http://linux.die.net/man/3/posix_spawn
- * http://unix.derkeiler.com/Newsgroups/comp.unix.programmer/2009-02/msg00222.html
- * https://bitbucket.org/burtonator/peregrine/src/854f608b7f4b0510d088b3a6d558db478cdd473c/src/java/peregrine/os/unistd.java
- * https://github.com/axiak/java_posix_spawn/blob/master/src/c/jlinuxfork.c
- * http://pubs.opengroup.org/onlinepubs/009695399/functions/posix_spawn.html
- * http://skife.org/java/2012/01/24/java_daemonization_with_gressil.html
- * https://kenai.com/projects/jna-posix/sources/mercurial/content/src/org/jruby/ext/posix/LibC.java?rev=59
- * https://github.com/bxm156/java_posix_spawn
- * http://bryanmarty.com/blog/2012/01/14/forking-jvm/
  */
 @SuppressWarnings("all")
 public class C {
@@ -46,251 +36,6 @@ public class C {
 
   static {
     Native.register(LIB);
-  }
-
-  public static final int
-      EPOLL_CTL_ADD = 1
-    , EPOLL_CTL_DEL = 2
-    , EPOLL_CTL_MOD = 3
-  ;
-
-  public static int
-      EPOLLIN      = (int)0x001
-    , EPOLLPRI     = (int)0x002
-    , EPOLLOUT     = (int)0x004
-    , EPOLLRDNORM  = (int)0x040
-    , EPOLLRDBAND  = (int)0x080
-    , EPOLLWRNORM  = (int)0x100
-    , EPOLLWRBAND  = (int)0x200
-    , EPOLLMSG     = (int)0x400
-    , EPOLLERR     = (int)0x008
-    , EPOLLHUP     = (int)0x010
-    , EPOLLRDHUP   = (int)0x2000
-    , EPOLLWAKEUP  = (int)(1 << 29)
-    , EPOLLONESHOT = (int)(1 << 30)
-    , EPOLLET      = (int)(1 << 31)
-  ;
-
-  /*
-    typedef union epoll_data
-    {
-      void *ptr;
-      int fd;
-      uint32_t u32;
-      uint64_t u64;
-    } epoll_data_t;
-   */
-  public static class epoll_data_t extends Union {
-    public Pointer ptr;
-    public int fd;
-    public int u32;
-    public long u64;
-
-    public epoll_data_t() {
-      super();
-    }
-
-    public epoll_data_t(int fd_or_u32) {
-      super();
-      this.u32 = this.fd = fd_or_u32;
-      setType(Integer.TYPE);
-    }
-
-    public epoll_data_t(long u64) {
-      super();
-      this.u64 = u64;
-      setType(Long.TYPE);
-    }
-
-    public epoll_data_t(Pointer ptr) {
-      super();
-      this.ptr = ptr;
-      setType(Pointer.class);
-    }
-
-    public static class ByReference extends epoll_data_t implements com.sun.jna.Structure.ByReference {
-    }
-
-    public static class ByValue extends epoll_data_t implements com.sun.jna.Structure.ByValue {
-    }
-  }
-
-  /*
-    struct epoll_event
-    {
-      uint32_t events;	//Epoll events
-      epoll_data_t data;	//User data variable
-    } __EPOLL_PACKED;
-   */
-  public static class epoll_event extends Structure {
-    public int events;        //Epoll events
-    public epoll_data_t data; //User data variable
-
-    protected List getFieldOrder() {
-      return Arrays.asList("events", "data");
-    }
-
-    public epoll_event() {
-      super(Structure.ALIGN_NONE);
-    }
-
-    public epoll_event(Pointer p) {
-      super(p, Structure.ALIGN_NONE);
-      setAlignType(Structure.ALIGN_NONE);
-      read();
-    }
-
-    public epoll_event(int events, epoll_data_t data) {
-      super(Structure.ALIGN_NONE);
-      this.events = events;
-      this.data = data;
-    }
-
-    public void reuse(Pointer p, int offset) {
-      useMemory(p, offset);
-      read();
-    }
-
-    public static class ByReference extends epoll_event implements Structure.ByReference {
-      public ByReference() {
-        super();
-      }
-
-      public ByReference(int fd, int events) {
-        super();
-        this.events = events;
-        data.fd = fd;
-        data.setType(Integer.TYPE);
-      }
-
-      public ByReference(Pointer ptr, int events) {
-        super();
-        this.events = events;
-        data.ptr = ptr;
-        data.setType(Pointer.class);
-      }
-
-      public ByReference oneshot() {
-        this.events = events | EPOLLONESHOT;
-        return this;
-      }
-    }
-
-    public static class ByValue extends epoll_event implements Structure.ByValue {
-    }
-  }
-
-  /*
-    /.* Creates an epoll instance.  Returns an fd for the new instance.
-       The "size" parameter is a hint specifying the number of file
-       descriptors to be associated with the new instance.  The fd
-       returned by epoll_create() should be closed with close().  *./
-    extern int epoll_create (int __size) __THROW;
-
-    /.* Same as epoll_create but with an FLAGS parameter.  The unused SIZE
-       parameter has been dropped.  *./
-    extern int epoll_create1 (int __flags) __THROW;
-
-
-    /.* Manipulate an epoll instance "epfd". Returns 0 in case of success,
-       -1 in case of error ( the "errno" variable will contain the
-       specific error code ) The "op" parameter is one of the EPOLL_CTL_*
-       constants defined above. The "fd" parameter is the target of the
-       operation. The "event" parameter describes which events the caller
-       is interested in and any associated user data.  *./
-    extern int epoll_ctl (int __epfd, int __op, int __fd,
-              struct epoll_event *__event) __THROW;
-
-
-    /.* Wait for events on an epoll instance "epfd". Returns the number of
-       triggered events returned in "events" buffer. Or -1 in case of
-       error with the "errno" variable set to the specific error code. The
-       "events" parameter is a buffer that will contain triggered
-       events. The "maxevents" is the maximum number of events to be
-       returned ( usually size of "events" ). The "timeout" parameter
-       specifies the maximum wait time in milliseconds (-1 == infinite).
-
-       This function is a cancellation point and therefore not marked with
-       __THROW.  *./
-    extern int epoll_wait (int __epfd, struct epoll_event *__events,
-               int __maxevents, int __timeout);
-
-
-    /.* Same as epoll_wait, but the thread's signal mask is temporarily
-       and atomically replaced with the one provided as parameter.
-
-       This function is a cancellation point and therefore not marked with
-       __THROW.  *./
-    extern int epoll_pwait (int __epfd, struct epoll_event *__events,
-          int __maxevents, int __timeout,
-          const __sigset_t *__ss);
-
-   */
-
-  public static native int close(int fd);
-
-  //extern int epoll_create (int __size) __THROW;
-  public static native int epoll_create(int size);
-
-  //extern int epoll_create1 (int __flags) __THROW;
-  public static native int epoll_create1(int flags);
-
-  //extern int epoll_ctl (int __epfd, int __op, int __fd, struct epoll_event *__event) __THROW;
-  public static native int epoll_ctl(int epfd, int op, int fd, epoll_event.ByReference event);
-  public static native int epoll_ctl(int epfd, int op, int fd, Pointer event);
-
-  //extern int epoll_wait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout);
-
-  /**
-   * Wait for events on an epoll instance "epfd".
-   *
-   * @param epfd The epoll file descriptor created with {@link #epoll_create(int)} or {@link #epoll_create1(int)}.
-   * @param events A buffer that will contain triggered events.
-   * @param maxevents The maximum number of events to be returned ( usually size of "events" ).
-   * @param timeout Specifies the maximum wait time in milliseconds (-1 == infinite).
-   * @return The number of triggered events returned in "events" buffer. Or -1 in case of error with the "errno" ({@link com.sun.jna.Native#getLastError()})
-   *         variable set to the specific error code.
-   */
-  public static native int epoll_wait(int epfd, Pointer events, int maxevents, int timeout);
-  //public static native int epoll_wait(int epfd, epoll_event.ByReference events, int maxevents, int timeout);
-  //public static native int epoll_wait(int epfd, Structure events, int maxevents, int timeout);
-
-  //extern int epoll_pwait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
-  public static native int epoll_pwait(int epfd, Pointer events, int maxevents, int timeout, Pointer ss);
-
-
-  /*
-  /.* Data structure to contain information about the actions to be
-   performed in the new process with respect to file descriptors.  *./
-  typedef struct
-  {
-    int __allocated;
-    int __used;
-    struct __spawn_action *__actions;
-    int __pad[16];
-  } posix_spawn_file_actions_t;
-  */
-  public static class posix_spawn_file_actions_t extends Structure {
-    public int __allocated;
-    public int __used;
-    public Pointer __actions;
-    public int[] __pad = new int[16];
-
-    protected List getFieldOrder() {
-      return Arrays.asList("__allocated", "__used", "__actions", "__pad");
-    }
-
-    public posix_spawn_file_actions_t() {
-      super();
-    }
-
-    public static class ByReference extends posix_spawn_file_actions_t implements Structure.ByReference {
-
-    }
-
-    public static class ByValue extends posix_spawn_file_actions_t implements Structure.ByValue {
-
-    }
   }
 
   /*
@@ -328,45 +73,6 @@ public class C {
 
     public sched_param() {
       super();
-    }
-  }
-
-  /*
-    //Data structure to contain attributes for thread creation.
-    typedef struct
-    {
-      short int __flags;
-      pid_t __pgrp;
-      sigset_t __sd;
-      sigset_t __ss;
-      struct sched_param __sp;
-      int __policy;
-      int __pad[16];
-    } posix_spawnattr_t;
-  */
-  public static class posix_spawnattr_t extends Structure {
-    public short __flags;
-    public int __pgrp;
-    public sigset_t __sd;
-    public sigset_t __ss;
-    public sched_param __sp;
-    public int __policy;
-    public int[] __pad = new int[16];
-
-    protected List getFieldOrder() {
-      return Arrays.asList("__flags", "__pgrp", "__sd", "__ss", "__sp", "__policy", "__pad");
-    }
-
-    public posix_spawnattr_t() {
-      super();
-    }
-
-    public static class ByReference extends posix_spawnattr_t implements Structure.ByReference {
-
-    }
-
-    public static class ByValue extends posix_spawnattr_t implements Structure.ByValue {
-
     }
   }
 
@@ -420,33 +126,18 @@ public class C {
     , EFD_NONBLOCK  = 00004000
   ;
 
-  // /usr/include/x86_64-linux-gnu/bits/epoll.h
-  public static final int
-      EPOLL_CLOEXEC  = 02000000
-  ;
-
-  public static final short
-      POSIX_SPAWN_RESETIDS      = 0x01
-    , POSIX_SPAWN_SETPGROUP     = 0x02
-    , POSIX_SPAWN_SETSIGDEF     = 0x04
-    , POSIX_SPAWN_SETSIGMASK    = 0x08
-    , POSIX_SPAWN_SETSCHEDPARAM = 0x10
-    , POSIX_SPAWN_SETSCHEDULER  = 0x20
-    , POSIX_SPAWN_USEVFORK      = 0x40
-  ;
-
   // /usr/include/x86_64-linux-gnu/bits/signum.h
   public static final int
-      SIGHUP		= 1	/* Hangup (POSIX).  */
-    , SIGINT		= 2	/* Interrupt (ANSI).  */
-    , SIGQUIT		= 3	/* Quit (POSIX).  */
-    , SIGILL		= 4	/* Illegal instruction (ANSI).  */
-    , SIGTRAP		= 5	/* Trace trap (POSIX).  */
-    , SIGABRT		= 6	/* Abort (ANSI).  */
-    , SIGIOT		= 6	/* IOT trap (4.2 BSD).  */
-    , SIGBUS		= 7	/* BUS error (4.2 BSD).  */
-    , SIGFPE		= 8	/* Floating-point exception (ANSI).  */
-    , SIGKILL		= 9	/* Kill, unblockable (POSIX).  */
+      SIGHUP		=  1	/* Hangup (POSIX).  */
+    , SIGINT		=  2	/* Interrupt (ANSI).  */
+    , SIGQUIT		=  3	/* Quit (POSIX).  */
+    , SIGILL		=  4	/* Illegal instruction (ANSI).  */
+    , SIGTRAP		=  5	/* Trace trap (POSIX).  */
+    , SIGABRT		=  6	/* Abort (ANSI).  */
+    , SIGIOT		=  6	/* IOT trap (4.2 BSD).  */
+    , SIGBUS		=  7	/* BUS error (4.2 BSD).  */
+    , SIGFPE		=  8	/* Floating-point exception (ANSI).  */
+    , SIGKILL		=  9	/* Kill, unblockable (POSIX).  */
     , SIGUSR1		= 10	/* User-defined signal 1 (POSIX).  */
     , SIGSEGV		= 11	/* Segmentation violation (ANSI).  */
     , SIGUSR2		= 12	/* User-defined signal 2 (POSIX).  */
@@ -512,6 +203,8 @@ public class C {
     return status == 0xffff;
   }
 
+  public static native int close(int fd);
+
   public static native int getpid();
 
   public static native int kill(int pid, int sig);
@@ -525,19 +218,4 @@ public class C {
   public static native int eventfd(int initval, int flags);
   public static native int eventfd_write(int fd, long value);
   public static native int eventfd_read(int fd, LongByReference value);
-
-  public static native int posix_spawn_file_actions_init(posix_spawn_file_actions_t.ByReference __file_actions);
-  public static native int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t.ByReference __file_actions);
-  public static native int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t.ByReference __file_actions, int _fd, String __path, int __oflag, int mode);
-  public static native int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t.ByReference __file_actions, int fildes);
-
-  public static native int posix_spawnattr_init(posix_spawnattr_t.ByReference attr);
-  public static native int posix_spawnattr_destroy(posix_spawnattr_t.ByReference attr);
-  public static native int posix_spawnattr_setflags(posix_spawnattr_t.ByReference attr, short flags);
-
-  //int posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
-  //int posix_spawnp(pid_t *restrict pid, const char *restrict file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char * const envp[restrict]);
-  public static native int posix_spawn(IntByReference pid, String path, Pointer fileActions, Pointer attr, ByteBuffer argv, ByteBuffer envp);
-  public static native int posix_spawnp(IntByReference pid, String file, posix_spawn_file_actions_t.ByReference file_actions, posix_spawnattr_t.ByReference attrp, ByteBuffer argv, ByteBuffer envp);
-  public static native int posix_spawnp(IntByReference pid, String file, posix_spawn_file_actions_t.ByReference file_actions, posix_spawnattr_t.ByReference attrp, Pointer argv, ByteBuffer envp);
 }

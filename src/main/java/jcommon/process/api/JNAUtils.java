@@ -38,6 +38,7 @@ public class JNAUtils {
    *
    * @return An instance of {@link PinnableMemory} which is also a {@link com.sun.jna.Pointer}.
    */
+  @SuppressWarnings("deprecation")
   public static PinnableMemory createPointerToString(boolean wide, String value) {
     PinnableMemory ref;
 

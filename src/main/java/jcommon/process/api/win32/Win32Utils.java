@@ -19,7 +19,6 @@
 
 package jcommon.process.api.win32;
 
-import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import jcommon.process.api.PinnableMemory;
@@ -51,6 +50,7 @@ public class Win32Utils {
    * @param wide <code>true</code> if the value {@link String} is wide, <code>false</code> otherwise.
    * @return A pointer to the modifiable {@link String}.
    */
+  @SuppressWarnings("deprecation")
   public static Pointer toLPTSTR(String value, boolean wide) {
     PinnableMemory ptr = null;
     if (value != null) {
@@ -68,7 +68,8 @@ public class Win32Utils {
     return ptr;
   }
 
-  /** Return a byte array corresponding to the given String.  If the
+  /**
+   * Return a byte array corresponding to the given String.  If the
    * system property <code>jna.encoding</code> is set, its value will override
    * the default platform encoding (if supported).
    *
@@ -83,7 +84,8 @@ public class Win32Utils {
     }
   }
 
-  /** Return a byte array corresponding to the given String, using the given
+  /**
+   * Return a byte array corresponding to the given String, using the given
    * encoding.
    *
    * Courtesy JNA
