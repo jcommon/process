@@ -395,6 +395,9 @@ public class Win32ProcessLauncherIOCP {
   }
 
   public static IProcess launch(final boolean inherit_parent_environment, final IEnvironmentVariableBlock environment_variables, final String[] args, final IProcessListener[] listeners) {
+    STARTUPINFO si = new STARTUPINFO();
+    PROCESS_INFORMATION.ByReference pi = new PROCESS_INFORMATION.ByReference();
+
     final String command_line = formulateSanitizedCommandLine(args);
     final ByteBuffer env_vars = formulateEnvironmentVariableBlock(environment_variables);
 
@@ -507,7 +510,11 @@ public class Win32ProcessLauncherIOCP {
     try {
       final boolean success = CreateProcess(null, command_line, null, null, true, new DWORD(NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT), env_vars /* environment block */, null /* current dir */, startup_info, proc_info) != 0;
       if (!success) {
-        throw new IllegalStateException("Unable to create a process with the following command line: " + command_line);
+        int error = Native.getLastError();
+        if (error != ERROR_SUCCESS)
+          throw new IllegalStateException("Unable to create process: [" + error + "] " + SystemMessageForErrorCode(error));
+        else
+          throw new IllegalStateException("Unable to create process due to an unknown error");
       }
     } catch(Throwable t) {
       CloseHandle(stdout_child_process_read);
