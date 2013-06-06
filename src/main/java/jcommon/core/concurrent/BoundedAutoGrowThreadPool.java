@@ -1,6 +1,8 @@
 package jcommon.core.concurrent;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -71,7 +73,8 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
   private boolean shutdown = false;
   private int pool_size = 0;
   private int core_size = 0;
-  private LinkedList<ThreadInformation<T>> threads;
+  private Map<Thread, ThreadInformation<T>> threads;
+  private LinkedBlockingQueue<ThreadInformation<T>> shrinking;
 
   @SuppressWarnings("unchecked")
   public static BoundedAutoGrowThreadPool create(final int minimumPoolSize, final int maximumPoolSize, final IGrowCallback createCallback, final IShrinkCallback shrinkCallback) {
@@ -115,7 +118,9 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
     this.shutdown_callback = shutdownCallback;
 
     this.thread_factory = threadFactory;
-    this.threads = new LinkedList<ThreadInformation<T>>();
+    this.threads = new ConcurrentHashMap<Thread, ThreadInformation<T>>(maximumPoolSize, 1.0f);
+
+    this.shrinking = new LinkedBlockingQueue<ThreadInformation<T>>(maximumPoolSize <= 0 ? 1 : maximumPoolSize);
 
     growThreadPoolBy(minimumPoolSize, false, true);
   }
@@ -133,11 +138,21 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
   }
 
   public int getPoolSize() {
-    return pool_size;
+    lock.lock();
+    try {
+      return pool_size;
+    } finally {
+      lock.unlock();
+    }
   }
 
   public int getCoreSize() {
-    return core_size;
+    lock.lock();
+    try {
+      return core_size;
+    } finally {
+      lock.unlock();
+    }
   }
 
   @Override
@@ -175,13 +190,27 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
           public void run() {
             try {
               barrier.await();
+
               while(!ti.isStopRequested()) {
                 try {
                   worker.doWork();
+                } catch(InterruptedException ie) {
+                  Thread.currentThread().interrupt();
                 } catch(Throwable t) {
+                } finally {
+                  //Indicate to the shrinking logic that we're now done.
+                  //If the worker exits before we've called shrink, that
+                  //should be alright -- but we'll be consuming more memory
+                  //than we absolutely have to. The thread will stay resident
+                  //though, until it's explicitly shrunk.
+                  shrinking.offer(threads.remove(Thread.currentThread()));
+
+                  //Wait for the shrinking methods to reap this thread.
+                  ti.waitForStop();
                 }
-                ti.waitForStop();
               }
+            } catch(InterruptedException ie) {
+              Thread.currentThread().interrupt();
             } catch(Throwable t) {
               //Do nothing.
             } finally {
@@ -194,7 +223,7 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
         ti.thread = thread;
         ti.worker = worker;
 
-        threads.offerFirst(ti);
+        threads.put(thread, ti);
 
         thread.setDaemon(false);
         thread.start();
@@ -225,13 +254,24 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
       final int size = shutting_down ? pool_size : Math.max(0, pool_size - Math.max(minimum_pool_size, core_size - by));
 
       for(; i < size; ++i) {
-        final ThreadInformation<T> ti = threads.pollFirst();
-        if (ti == null) {
-          break;
-        }
+        //Should cause a thread to exit.
+        shrink_callback.shrink(value, null, null);
 
+        //The shrinking member will not be added to unless the worker.doWork()
+        //method has exited. Unfortunately this does mean that it could take a
+        //while between the request to shrink and the worker complying.
+        //
+        //For instance, we could ask to shrink, and then the worker doesn't
+        //respond, perhaps sleeping for X amount of time, and then finally he
+        //exits, which pushes to shrinking which allows this take() to finally
+        //return something. Thus the "wait_for_thread_to_stop" parameter is
+        //basically meaningless.
+        //
+        //The .take() method will block until shrinking has been added to.
+        final ThreadInformation<T> ti = shrinking.take();
+
+        //The thread is waiting
         ti.requestStop();
-        shrink_callback.shrink(value, ti.thread, ti.worker);
         if (wait_for_thread_to_stop) {
           ti.waitForStopped();
         }
@@ -242,9 +282,14 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
       pool_size = Math.max(0, pool_size - i);
       core_size = Math.max(0, core_size - by);
 
-      if (shutting_down && shutdown_callback != null) {
-        shutdown_callback.shutdown(value);
+      if (shutting_down) {
+        shrinking.clear();
+
+        if (shutdown_callback != null) {
+          shutdown_callback.shutdown(value);
+        }
       }
+
       lock.unlock();
     }
   }
