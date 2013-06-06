@@ -284,6 +284,7 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
 
       if (shutting_down) {
         shrinking.clear();
+        threads.clear();
 
         if (shutdown_callback != null) {
           shutdown_callback.shutdown(value);
