@@ -1,6 +1,7 @@
 !.gitignore
 
-.idea/workspace.xml
+.idea/
+!.idea/runConfigurations/
 
 dependencies/
 target/
