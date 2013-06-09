@@ -22,6 +22,8 @@ package jcommon.core.concurrent;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
@@ -32,6 +34,7 @@ import static jcommon.core.concurrent.BoundedAutoGrowThreadPool.*;
 public class BoundedAutoGrowThreadPoolTest {
   private static class CounterCallback implements IGrowCallback<Object>, IShrinkCallback<Object> {
     private final AtomicInteger counter = new AtomicInteger(0);
+    private final Semaphore sem = new Semaphore(0);
 
     public int getCounter() {
       return counter.get();
@@ -40,12 +43,23 @@ public class BoundedAutoGrowThreadPoolTest {
     @Override
     public IWorker<Object> growNewWorker(Object value) {
       counter.incrementAndGet();
-      return null;
+      return new IWorker<Object>() {
+        @Override
+        public void doWork() throws Throwable {
+          try {
+            sem.acquire();
+          } catch(InterruptedException ie) {
+            Thread.currentThread().interrupt();
+          } finally {
+            counter.decrementAndGet();
+          }
+        }
+      };
     }
 
     @Override
     public void shrink(Object value, Thread thread, IWorker<Object> worker) {
-      counter.decrementAndGet();
+      sem.release();
     }
   }
 

@@ -254,8 +254,14 @@ public class BoundedAutoGrowThreadPool<T extends Object> {
       final int size = shutting_down ? pool_size : Math.max(0, pool_size - Math.max(minimum_pool_size, core_size - by));
 
       for(; i < size; ++i) {
-        //Should cause a thread to exit.
-        shrink_callback.shrink(value, null, null);
+        if (shrinking.isEmpty()) {
+          //Cause (request) a thread to exit.
+          //
+          //We only want to do this if there isn't one already waiting to be
+          //reaped. It is possible that there's a race condition between
+          //this call to shrink() and a thread choosing to end on its own.
+          shrink_callback.shrink(value, null, null);
+        }
 
         //The shrinking member will not be added to unless the worker.doWork()
         //method has exited. Unfortunately this does mean that it could take a
