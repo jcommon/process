@@ -2,6 +2,7 @@ package jcommon.process.platform.unix;
 
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.Structure;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.LongByReference;
 import jcommon.core.concurrent.BoundedAutoGrowThreadPool;
@@ -9,6 +10,7 @@ import jcommon.process.IEnvironmentVariable;
 import jcommon.process.IProcess;
 import jcommon.process.IProcessListener;
 import jcommon.process.api.PinnableMemory;
+import jcommon.process.api.unix.C;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -171,6 +173,16 @@ public class UnixProcessLauncherEPoll {
       throw new IllegalStateException("Unable to create a pipe"); //Too many files open? (errno EMFILE or ENFILE)
     }
 
+    //Should be a globally shared epoll descriptor...
+    epoll_event.ByReference event;
+    final int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (epoll_fd < 0) {
+      //DOH!
+      //Error out...
+      //See http://linux.die.net/man/2/epoll_create1
+    }
+
+
     final int parent_write_to_child_stdin = pipe_child_stdin[1];
     final int parent_read_from_child_stdout = pipe_child_stdout[0];
     final int parent_read_from_child_stderr = pipe_child_stderr[0];
@@ -182,6 +194,30 @@ public class UnixProcessLauncherEPoll {
     final String str_child_read_from_stdin = Integer.toString(child_read_from_stdin);
     final String str_child_write_to_stdout = Integer.toString(child_write_to_stdout);
     final String str_child_write_to_stderr = Integer.toString(child_write_to_stderr);
+
+    //Make the pipes non-blocking.
+    make_nonblocking(parent_write_to_child_stdin);
+    make_nonblocking(parent_read_from_child_stdout);
+    make_nonblocking(parent_read_from_child_stderr);
+
+    final int stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    event = new epoll_event.ByReference(stop_fd, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
+    //eventfd_write(stop_fd, 1); //This is how you tell a thread in epoll_wait() to stop. Write the value 1 once per thread.
+    //eventfd_write(stop_fd, 1); //Just for illustration on how you'd instruct 2 threads to stop.
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, stop_fd, event);
+
+    //Create signalfd() to detect SIGCHLD and then reap child process exiting.
+//    sigset_t.ByReference mask = new sigset_t.ByReference();
+//    sigemptyset(mask);
+//    sigaddset(mask, SIGCHLD);
+//    check(sigprocmask(SIG_BLOCK, mask, null));
+//
+//    final int sigchld_fd = signalfd(-1, mask, 0);
+//    event = new epoll_event.ByReference(sigchld_fd, EPOLLIN | EPOLLOUT | EPOLLET);
+//    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sigchld_fd, event);
+
+    event = new epoll_event.ByReference(parent_read_from_child_stdout, EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, parent_read_from_child_stdout, event);
 
     posix_spawnattr_t.ByReference attr = new posix_spawnattr_t.ByReference();
     check(posix_spawnattr_init(attr));
@@ -224,18 +260,13 @@ public class UnixProcessLauncherEPoll {
       throw new IllegalStateException("Unable to run the spawn process.");
     }
 
-    final int pid = ptr_pid.getValue();
+    final int child_pid = ptr_pid.getValue();
 
     final String working_directory = "/";
     final String[] application_args = new String[] {
         "ls"
       , "-lah"
     };
-
-    //Make the pipes non-blocking.
-    make_nonblocking(parent_write_to_child_stdin);
-    make_nonblocking(parent_read_from_child_stdout);
-    make_nonblocking(parent_read_from_child_stderr);
 
     //Send the working directory.
     write_path(parent_write_to_child_stdin, working_directory);
@@ -262,17 +293,6 @@ public class UnixProcessLauncherEPoll {
 //    } catch (InterruptedException e) {
 //    }
 
-    //Allow the child process to run execve() and begin doing real work.
-    write_byte(parent_write_to_child_stdin, READY_VALUE);
-
-    //Should be a globally shared epoll descriptor...
-    final int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-    if (epoll_fd < 0) {
-      //DOH!
-      //Error out...
-      //See http://linux.die.net/man/2/epoll_create1
-    }
-
     //Use eventfd() and add to epoll in order to signal threads to exit.
 
     //http://www.gossamer-threads.com/lists/linux/kernel/1197050
@@ -280,20 +300,31 @@ public class UnixProcessLauncherEPoll {
     //http://stackoverflow.com/questions/5541054/how-to-correctly-read-data-when-using-epoll-wait
     //http://linux.die.net/man/2/epoll_wait
 
-    epoll_event.ByReference event;
+    sigaction.ByReference old = new sigaction.ByReference();
+    sigaction.ByReference act = new sigaction.ByReference(0, new sa_sigaction() {
+      @Override
+      public void action(int signum, siginfo_t info, Pointer context) {
+        System.out.println("THREAD: " + Thread.currentThread().getName());
+        System.out.println("FROM SA_SIGACTION HANDLR: " + (signum == SIGCHLD));
+        System.out.println("si_code: " + info.si_code);
+        System.out.println("si_signo: " + info.si_signo);
+        System.out.println("si_errno: " + info.si_errno);
+        System.out.println("pid: " + info.si_field.sig_chld.si_pid);
 
-    final int stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 
-    //System.out.println("stop_fd: " + stop_fd);
-    //System.out.println("parent_read_from_child_stdout: " + parent_read_from_child_stdout);
+        int pid, status, exit_code;
+        boolean exited_normally;
+        IntByReference ptr_status = new IntByReference();
 
-    event = new epoll_event.ByReference(stop_fd, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
-    //eventfd_write(stop_fd, 1); //This is how you tell a thread in epoll_wait() to stop. Write the value 1 once per thread.
-    //eventfd_write(stop_fd, 1); //Just for illustration on how you'd instruct 2 threads to stop.
-    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, stop_fd, event);
-
-    event = new epoll_event.ByReference(parent_read_from_child_stdout, EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLONESHOT);
-    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, parent_read_from_child_stdout, event);
+        while((pid = waitpid(-1, ptr_status, WNOHANG)) != -1) {
+          status = ptr_status.getValue();
+          exited_normally = WIFEXITED(status);
+          exit_code = exited_normally ? WEXITSTATUS(status) : -1;
+          System.out.println("CHILD PROC " + pid + " HAS EXITED W/ STATUS: " + exit_code);
+        }
+      }
+    });
+    sigaction(SIGCHLD, act, old);
 
     //Create a thread pool that automatically grows and shrinks according to a provided value.
     final BoundedAutoGrowThreadPool pool = BoundedAutoGrowThreadPool.create(
@@ -317,6 +348,7 @@ public class UnixProcessLauncherEPoll {
               final PinnableMemory ptr = new PinnableMemory(MAX_EVENTS * size_of_struct);
               final epoll_event.ByReference event = new epoll_event.ByReference();
               final LongByReference ptr_long = new LongByReference();
+              final sigset_t.ByReference sig = new sigset_t.ByReference();
 
               boolean please_stop = false;
               long eventfd_value;
@@ -324,9 +356,16 @@ public class UnixProcessLauncherEPoll {
               int i;
               int err;
 
+              sigemptyset(sig);
+              sigaddset(sig, SIGCHLD);
+
               try {
-                while(!please_stop && (ready_count = epoll_wait(epoll_fd, ptr, MAX_EVENTS, -1)) > 0) {
+                while(!please_stop && (ready_count = epoll_pwait(epoll_fd, ptr, MAX_EVENTS, -1, sig)) > 0) {
                   err = Native.getLastError();
+                  if (err == EINTR) {
+                    System.out.println("EINTR!!!");
+                    continue;
+                  }
 
                   System.out.println(ready_count + " events on thread " + Thread.currentThread().getName());
 
@@ -363,6 +402,70 @@ public class UnixProcessLauncherEPoll {
                       }
                     }
 
+//                    if (event.data.fd == sigchld_fd) {
+//                      System.out.println("RECVD SIGCHLD ON " + Thread.currentThread().getName());
+//
+//                      //Now it's possible that multiple child processes have died at once, so we need to read in all
+//                      //of them that may have been queued up.
+//                      //
+//                      //See http://thread.gmane.org/gmane.linux.kernel/767032
+//
+//                      int pid, status, exit_code;
+//                      boolean exited_normally;
+//                      IntByReference ptr_status = new IntByReference();
+//
+//                      while((pid = waitpid(-1, ptr_status, WNOHANG)) != -1) {
+//                        status = ptr_status.getValue();
+//                        exited_normally = WIFEXITED(status);
+//                        exit_code = exited_normally ? WEXITSTATUS(status) : -1;
+//                        System.out.println("CHILD PROC " + pid + " HAS EXITED W/ STATUS: " + exit_code);
+//                      }
+//
+//                      err = Native.getLastError();
+//                      System.out.println("ERR: " + err);
+//
+//                      //Re-arm
+//                      epoll_ctl(epoll_fd, EPOLL_CTL_MOD, sigchld_fd, event.oneshot());
+//
+//
+//                      //Only close this when the epoll fd is also closed.
+//                      //close(sigchld_fd);
+//                    }
+
+                    if (event.data.fd == parent_read_from_child_stdout) {
+                      ByteBuffer bb = ByteBuffer.allocateDirect(1024);
+                      int bytesRead;
+
+                      //http://linux.die.net/man/2/read
+                      //
+                      //On success, the number of bytes read is returned (zero indicates end of file), and the file
+                      //position is advanced by this number. It is not an error if this number is smaller than the
+                      //number of bytes requested; this may happen for example because fewer bytes are actually
+                      //available right now (maybe because we were close to end-of-file, or because we are reading
+                      //from a pipe, or from a terminal), or because read() was interrupted by a signal. On error, -1
+                      //is returned, and errno is set appropriately. In this case it is left unspecified whether the
+                      //file position (if any) changes.
+                      while((bytesRead = read_bytes(parent_read_from_child_stdout, bb)) > 0) {
+                        System.out.println("bytes read: " + bytesRead);
+                        System.out.println(Charset.forName("UTF-8").decode(bb).toString());
+                      }
+                      err = Native.getLastError();
+                      if (err == EAGAIN || err == EWOULDBLOCK) {
+                        //The file descriptor fd refers to a file other than a socket and has been marked
+                        //nonblocking (O_NONBLOCK), and the read would block.
+                        System.out.println("EAGAIN");
+                        if (bytesRead == 0) {
+                          System.out.println("CHILD PIPE CLOSED PROCESS EXITING");
+                          //Already closed on the child process side.
+                          //Time to close the pipe.
+                          close(parent_read_from_child_stdout);
+                        }
+                      } else if (err == EINTR) {
+                        //The call was interrupted by a signal before any data was read; see signal(7).
+                        System.out.println("EINTR");
+                      }
+                    }
+
                     System.out.println("  FD: " + event.data.fd);
                     System.out.println("  Events: " + event.events);
                   }
@@ -385,6 +488,9 @@ public class UnixProcessLauncherEPoll {
       }
     );
 
+    //Allow the child process to run execve() and begin doing real work.
+    write_byte(parent_write_to_child_stdin, READY_VALUE);
+
     //After sending the last message, spawn will execvpe() into the child
     //process. From here on out, all i/o should be redirected to callbacks
     //and no more writing/reading should take place from this method, b/c it's
@@ -406,8 +512,8 @@ public class UnixProcessLauncherEPoll {
 //      System.out.print(output);
 //    }
 
-    IntByReference status = new IntByReference();
-    waitpid(pid, status, 0);
+    //IntByReference status = new IntByReference();
+    //waitpid(child_pid, status, 0);
 
 
 

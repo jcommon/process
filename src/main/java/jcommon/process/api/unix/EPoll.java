@@ -247,5 +247,5 @@ public class EPoll {
   //public static native int epoll_wait(int epfd, Structure events, int maxevents, int timeout);
 
   //extern int epoll_pwait (int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
-  public static native int epoll_pwait(int epfd, Pointer events, int maxevents, int timeout, Pointer ss);
+  public static native int epoll_pwait(int epfd, Pointer events, int maxevents, int timeout, sigset_t.ByReference ss);
 }

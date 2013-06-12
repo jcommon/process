@@ -196,7 +196,7 @@ int main(int argc, const char *argv[]) {
     if (chdir(working_directory) != 0) {
       //There was an error changing the directory.
       //Ignore for now? If we do that, then the CWD will be the parent process' CWD.
-      //ERROR("Unable to update the current working directory.");
+      ERROR("Unable to change the current working directory.");
     }
   }
 
